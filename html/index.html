@@ -168,7 +168,7 @@
     <div class="assistant-heading">
       <strong>Port a Potty Assistant</strong>
       <span>ElevenLabs voice assistant for the current log findings</span>
-      <span id="assistant-voice-status" class="assistant-voice-status">Click Talk to assistant to enable your microphone.</span>
+      <span id="assistant-voice-status" class="assistant-voice-status">Dictate one message or start Conversation mode to enable your microphone.</span>
       <div id="assistant-voice-indicator" class="assistant-voice-indicator" role="status" hidden>
         <span class="voice-state-dot" aria-hidden="true"></span><span id="assistant-voice-state">Listening</span>
       </div>
@@ -180,7 +180,8 @@
       <input id="assistant-input" name="question" maxlength="1200" autocomplete="off"
              placeholder="Ask about a finding..." aria-label="Question for the assistant" required>
       <button type="submit">Send</button>
-      <button type="button" id="assistant-talk" class="assistant-talk" aria-pressed="false">Start speech mode</button>
+      <button type="button" id="assistant-dictate" class="assistant-dictate">Dictate text with ElevenLabs</button>
+      <button type="button" id="assistant-talk" class="assistant-talk" aria-pressed="false">Start conversation mode</button>
       <button type="button" id="assistant-text-mode" class="assistant-text-mode" hidden>Return to text mode</button>
       <button type="button" id="assistant-stop-voice" class="assistant-stop-voice" disabled>Stop voice</button>
     </form>

@@ -188,9 +188,24 @@ document.addEventListener("change", (event) => {
 function addAssistantMessage(text, role = "assistant") {
   const messages = document.getElementById("assistant-messages");
   if (!messages) return;
-  const message = document.createElement("p");
+  const isAnswer = role === "assistant-answer";
+  const message = document.createElement(isAnswer ? "div" : "p");
   message.className = `assistant-message ${role}`;
-  message.textContent = text;
+  if (isAnswer) {
+    const content = document.createElement("span");
+    content.textContent = text;
+    const read = document.createElement("button");
+    read.type = "button";
+    read.className = "assistant-read-answer";
+    read.textContent = "Read aloud with ElevenLabs";
+    read.addEventListener("click", () => {
+      window.portAPottyVoiceEnabled = true;
+      speakAssistantAnswer(text);
+    });
+    message.append(content, read);
+  } else {
+    message.textContent = text;
+  }
   messages.append(message);
   messages.scrollTop = messages.scrollHeight;
   return message;
@@ -238,7 +253,7 @@ async function askAssistant(form) {
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || "The assistant could not respond.");
     pending.remove();
-    addAssistantMessage(data.answer, "assistant");
+    addAssistantMessage(data.answer, "assistant-answer");
     await speakAssistantAnswer(data.answer);
     window.portAPottyResumeSpeechMode?.();
   } catch (err) {
@@ -253,6 +268,7 @@ async function askAssistant(form) {
 
 function setupVoiceInput() {
   const button = document.getElementById("assistant-talk");
+  const dictate = document.getElementById("assistant-dictate");
   const textMode = document.getElementById("assistant-text-mode");
   const input = document.getElementById("assistant-input");
   const form = document.getElementById("assistant-form");
@@ -261,10 +277,12 @@ function setupVoiceInput() {
   const voiceState = document.getElementById("assistant-voice-state");
   const canRecord = Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
   let stream, recorder, monitor, audioContext, speechMode = false;
+  let dictationStream, dictationRecorder;
   window.portAPottyVoiceEnabled = false;
-  if (!button || !input || !canRecord) {
+  if (!button || !dictate || !input || !canRecord) {
     button.textContent = "Voice unavailable";
     button.disabled = true;
+    if (dictate) dictate.disabled = true;
     return;
   }
   const setStatus = (message) => { if (voiceStatus) voiceStatus.textContent = message; };
@@ -276,6 +294,7 @@ function setupVoiceInput() {
   };
   const setModeControls = (active) => {
     button.hidden = active;
+    dictate.hidden = active;
     textMode.hidden = !active;
     textMode.disabled = !active;
   };
@@ -283,6 +302,49 @@ function setupVoiceInput() {
     clearInterval(monitor);
     audioContext?.close();
     audioContext = undefined;
+  }
+  async function toggleDictation() {
+    if (dictationRecorder?.state === "recording") {
+      dictationRecorder.stop();
+      return;
+    }
+    try {
+      setStatus("Requesting microphone permission for text dictation…");
+      dictationStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const chunks = [];
+      dictationRecorder = new MediaRecorder(dictationStream);
+      dictationRecorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
+      dictationRecorder.onstop = async () => {
+        dictationStream.getTracks().forEach((track) => track.stop());
+        dictate.classList.remove("recording");
+        dictate.textContent = "Dictate text with ElevenLabs";
+        dictate.disabled = true;
+        try {
+          setStatus("Transcribing your dictated text with ElevenLabs…");
+          const data = new FormData();
+          data.append("audio", new Blob(chunks, { type: dictationRecorder.mimeType || "audio/webm" }), "dictation.webm");
+          const response = await fetch("/api/assistant/transcribe", { method: "POST", body: data });
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(result.error || "Could not transcribe the recording.");
+          input.value = result.text;
+          input.focus();
+          setStatus("Dictation is ready. Edit it or press Send.");
+        } catch (err) {
+          toast(err.message, "error");
+          setStatus("Text mode is on. Type a question below.");
+        } finally {
+          dictate.disabled = false;
+        }
+      };
+      dictationRecorder.start();
+      dictate.classList.add("recording");
+      dictate.textContent = "Stop dictation and transcribe";
+      setStatus("Dictation is recording. Click again when you finish speaking.");
+    } catch (err) {
+      const reason = err?.name || "UnknownError";
+      setStatus(`Microphone request failed (${reason}). Check Edge and Windows microphone permissions.`);
+      toast("Microphone access is required for dictation.", "error");
+    }
   }
   async function transcribeTurn(chunks, mimeType) {
     setStatus("Transcribing with ElevenLabs…");
@@ -316,7 +378,7 @@ function setupVoiceInput() {
     audioContext.createMediaStreamSource(stream).connect(analyser);
     const samples = new Uint8Array(analyser.fftSize);
     recorder.start();
-    setStatus("Speech mode is on — speak naturally. I will respond after you pause.");
+    setStatus("Conversation mode is on — speak naturally. I will respond after you pause.");
     setVoiceState("listening", "Listening…");
     monitor = setInterval(() => {
       analyser.getByteTimeDomainData(samples);
@@ -330,6 +392,7 @@ function setupVoiceInput() {
   }
   async function startSpeechMode() {
     try {
+      if (dictationRecorder?.state === "recording") dictationRecorder.stop();
       setStatus("Requesting microphone permission…");
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       speechMode = true;
@@ -358,6 +421,7 @@ function setupVoiceInput() {
   window.portAPottyResumeSpeechMode = () => { if (speechMode) listenForTurn(); };
   window.portAPottySetVoiceState = setVoiceState;
   button.addEventListener("click", startSpeechMode);
+  dictate.addEventListener("click", toggleDictation);
   textMode.addEventListener("click", stopSpeechMode);
 }
 

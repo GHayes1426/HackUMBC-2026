@@ -113,7 +113,10 @@ def assistant():
         "Use short paragraphs and simple numbered steps when useful.\n"
         f"Current findings: {json.dumps(findings)}\nUser question: {question.strip()}"
     )
-    body = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode()
+    body = json.dumps({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"maxOutputTokens": 1400},
+    }).encode()
     # The ``-latest`` alias keeps the demo on the currently enabled Flash text
     # model for this API key. Flash Lite is a lower-latency fallback when the
     # primary provider endpoint is temporarily overloaded.
