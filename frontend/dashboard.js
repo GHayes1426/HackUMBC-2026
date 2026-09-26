@@ -241,6 +241,7 @@ function setupVoiceInput() {
   let listening = false;
   let recorder;
   let stream;
+  const canRecord = Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
   window.portAPottyVoiceEnabled = false;
   if (!Recognition && !(navigator.mediaDevices?.getUserMedia && window.MediaRecorder)) {
     button.textContent = "Voice unavailable";
@@ -266,6 +267,17 @@ function setupVoiceInput() {
     recognition.onerror = () => toast("Microphone input was unavailable. Check browser microphone permission.", "error");
     recognition.onend = resetButton;
   }
+  function startBrowserFallback() {
+    if (!recognition) {
+      toast("Voice recording is not supported by this browser.", "error");
+      return;
+    }
+    toast("ElevenLabs is unavailable, so the browser voice fallback is listening.", "info");
+    listening = true;
+    button.textContent = "Listening…";
+    button.setAttribute("aria-pressed", "true");
+    recognition.start();
+  }
   async function startElevenLabsRecording() {
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -277,6 +289,7 @@ function setupVoiceInput() {
         resetButton();
         button.textContent = "Transcribing…";
         button.disabled = true;
+        let browserFallbackActive = false;
         try {
           const data = new FormData();
           data.append("audio", new Blob(chunks, { type: recorder.mimeType || "audio/webm" }), "question.webm");
@@ -286,10 +299,15 @@ function setupVoiceInput() {
           input.value = result.text;
           form.requestSubmit();
         } catch (err) {
-          toast(err.message, "error");
+          if (recognition) {
+            browserFallbackActive = true;
+            startBrowserFallback();
+          } else {
+            toast(err.message, "error");
+          }
         } finally {
           button.disabled = false;
-          resetButton();
+          if (!browserFallbackActive) resetButton();
         }
       };
       recorder.start();
@@ -303,19 +321,19 @@ function setupVoiceInput() {
   }
   button.addEventListener("click", () => {
     window.portAPottyVoiceEnabled = true;
-    if (!Recognition) {
-      if (recorder?.state === "recording") recorder.stop();
-      else startElevenLabsRecording();
+    if (recorder?.state === "recording") {
+      recorder.stop();
       return;
     }
-    if (listening) {
+    if (canRecord) {
+      startElevenLabsRecording();
+      return;
+    }
+    if (listening && recognition) {
       recognition.stop();
       return;
     }
-    listening = true;
-    button.textContent = "Listening…";
-    button.setAttribute("aria-pressed", "true");
-    recognition.start();
+    startBrowserFallback();
   });
 }
 
