@@ -32,7 +32,9 @@ def app_directory() -> Path:
 
 
 def load_configuration() -> None:
-    load_dotenv(app_directory() / ".env")
+    # A colocated helper .env is the explicit pairing configuration. Let it
+    # win over an unrelated system environment variable left by another tool.
+    load_dotenv(app_directory() / ".env", override=True)
 
 
 def device_id() -> str:
