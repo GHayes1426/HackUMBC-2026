@@ -70,6 +70,27 @@ the **Demo scenario** picker to demonstrate combined attacks, brute force,
 password spraying, or clean activity. No VM or live system-log access is
 required.
 
+### Hosted dashboard with the local helper
+
+The Vercel dashboard intentionally uses only the simulated-log analyzer. To
+show the three checks that need access to the judge's computer, build the
+downloadable helper. It runs **Local Port Assessor**, **Listening Services**,
+and **System Hardening** on that computer, then uploads display-only results
+to Tiger Data through the Vercel API. The website can view results but cannot
+run commands, close ports, or change any local settings.
+
+1. Add a long random `PORT_A_POTTY_AGENT_KEY` to the Vercel environment and
+   put the exact same value in a `.env` file beside the helper.
+2. Put the Vercel deployment address in `PORT_A_POTTY_API_URL` in that file.
+3. Run `powershell -ExecutionPolicy Bypass -File .\scripts\build_windows_helper.ps1`.
+4. Put the resulting `dist\Port-a-Potty-Helper.exe` and its `.env` together,
+   then run the EXE. It prints a pairing ID.
+5. Open the **Local device helper** panel in the hosted dashboard, paste that
+   pairing ID once, and select **Connect helper**.
+
+The helper uploads once a minute by default. It can be tested from the repo
+with `python port_a_potty_helper.py --once`.
+
 ## What's in it right now
 
 - **Local Port Assessor** (`checks/port_scan.py`): scans localhost

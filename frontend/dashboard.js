@@ -11,6 +11,7 @@
 const ICONS = { success: "✓", info: "…", warning: "!", error: "×" };
 let activeAssistantAudio;
 let assistantSpeechGenerating = false;
+const AGENT_PAIRING_STORAGE_KEY = "portAPottyAgentDeviceId";
 
 function setReadAloudButtonsDisabled(disabled, label = "Read aloud with ElevenLabs") {
   document.querySelectorAll(".assistant-read-answer").forEach((button) => {
@@ -471,6 +472,78 @@ function setupAssistantResize() {
   });
 }
 
+function setupLocalHelper() {
+  const form = document.getElementById("agent-pairing");
+  const input = document.getElementById("agent-device-id");
+  const refreshButton = document.getElementById("agent-refresh");
+  const status = document.getElementById("agent-status");
+  const container = document.getElementById("agent-results");
+  if (!form || !input || !refreshButton || !status || !container) return;
+
+  input.value = localStorage.getItem(AGENT_PAIRING_STORAGE_KEY) || "";
+  const setStatus = (message) => { status.textContent = message; };
+  const render = (scan) => {
+    container.replaceChildren();
+    const observed = new Date(scan.observed_at);
+    setStatus(`Latest scan from ${scan.hostname} at ${Number.isNaN(observed.valueOf()) ? "an unknown time" : observed.toLocaleString()}.`);
+    for (const result of scan.results || []) {
+      const card = document.createElement("article");
+      card.className = `agent-result status-${result.status || "error"}`;
+      const title = document.createElement("h3");
+      title.textContent = result.name || "Local check";
+      const description = document.createElement("p");
+      description.className = "description";
+      description.textContent = result.description || "";
+      const summary = document.createElement("p");
+      summary.className = "summary";
+      summary.textContent = result.summary || "";
+      const list = document.createElement("ul");
+      list.className = "agent-result-list";
+      for (const item of result.items || []) {
+        const row = document.createElement("li");
+        row.className = `item status-${item.status || "error"}`;
+        const label = document.createElement("span");
+        label.className = "label";
+        label.textContent = item.label || "";
+        const detail = document.createElement("span");
+        detail.className = "detail";
+        detail.textContent = item.detail || "";
+        row.append(label, detail);
+        list.append(row);
+      }
+      card.append(title, description, summary, list);
+      container.append(card);
+    }
+  };
+  const load = async () => {
+    const deviceId = input.value.trim();
+    if (!deviceId) {
+      setStatus("Paste the pairing ID printed by Port a Potty Helper first.");
+      container.replaceChildren();
+      return;
+    }
+    refreshButton.disabled = true;
+    refreshButton.textContent = "Refreshing…";
+    setStatus("Checking for the latest local scan…");
+    try {
+      const response = await fetch(`/api/agent/scan/${encodeURIComponent(deviceId)}`, { cache: "no-store" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || `Could not load scan (${response.status}).`);
+      localStorage.setItem(AGENT_PAIRING_STORAGE_KEY, deviceId);
+      render(data);
+    } catch (err) {
+      container.replaceChildren();
+      setStatus(err.message || "Could not load the local helper scan.");
+    } finally {
+      refreshButton.disabled = false;
+      refreshButton.textContent = "Refresh local scan";
+    }
+  };
+  form.addEventListener("submit", (event) => { event.preventDefault(); load(); });
+  refreshButton.addEventListener("click", load);
+  if (input.value) load();
+}
+
 document.addEventListener("submit", (event) => {
   const assistantForm = event.target.closest("#assistant-form");
   if (assistantForm) { event.preventDefault(); askAssistant(assistantForm); }
@@ -478,3 +551,4 @@ document.addEventListener("submit", (event) => {
 
 setupVoiceInput();
 setupAssistantResize();
+setupLocalHelper();

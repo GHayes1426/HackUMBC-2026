@@ -163,6 +163,23 @@
     {% endfor %}
   </main>
 
+  <section class="agent-panel" id="agent-panel" aria-labelledby="agent-title">
+    <div class="panel-head">
+      <h2 id="agent-title">Local device helper</h2>
+      <span class="tag"><span class="tag-icon" aria-hidden="true">↗</span>OPTIONAL</span>
+    </div>
+    <p class="description">Run the downloadable helper on a computer to show its local Port Assessor, Listening Services, and System Hardening results here.</p>
+    <form id="agent-pairing" class="agent-pairing">
+      <label>Helper pairing ID
+        <input id="agent-device-id" name="device_id" maxlength="128" autocomplete="off" placeholder="Paste the ID printed by Port a Potty Helper" aria-describedby="agent-status">
+      </label>
+      <button type="submit" class="save-settings">Connect helper</button>
+      <button type="button" id="agent-refresh" class="agent-refresh">Refresh local scan</button>
+    </form>
+    <p id="agent-status" class="agent-status" role="status">No local helper paired. The hosted dashboard still analyzes simulated log files.</p>
+    <div id="agent-results" class="agent-results"></div>
+  </section>
+
   <aside class="assistant-dock" aria-label="Port a Potty assistant">
     <button type="button" class="assistant-resize-handle" aria-label="Resize assistant window" title="Drag to resize"></button>
     <div class="assistant-heading">

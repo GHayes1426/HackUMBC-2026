@@ -53,7 +53,7 @@ body {
   font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
-header, main { max-width: 960px; margin: 0 auto; }
+header, main, .agent-panel { max-width: 960px; margin-left: auto; margin-right: auto; }
 header h1 { margin: 0 0 4px; font-size: 1.6rem; }
 header p { margin: 0 0 24px; color: var(--muted); }
 a { color: inherit; }
@@ -74,6 +74,26 @@ a { color: inherit; }
   margin-bottom: 20px;
 }
 .settings-panel h2 { margin: 0; font-size: 1.15rem; }
+.agent-panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 6px solid var(--info);
+  border-radius: 8px;
+  padding: 16px 20px;
+  margin-bottom: 20px;
+}
+.agent-panel h2 { margin: 0; font-size: 1.15rem; }
+.agent-pairing { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+.agent-pairing label { display: grid; gap: 4px; min-width: min(100%, 360px); color: var(--muted); font-size: .9rem; }
+.agent-pairing input { width: min(100%, 420px); padding: 7px 8px; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 5px; font: inherit; }
+.agent-refresh { align-self: end; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }
+.agent-status { margin: 12px 0 0; color: var(--muted); }
+.agent-results { display: grid; gap: 12px; margin-top: 14px; }
+.agent-result { padding: 13px 14px; border: 1px solid var(--border); border-left: 5px solid var(--dot); border-radius: 7px; }
+.agent-result h3 { margin: 0; font-size: 1rem; }
+.agent-result .summary { margin-top: 5px; }
+.agent-result-list { list-style: none; padding: 0; margin: 10px 0 0; }
+.agent-result-list .item { grid-template-columns: 108px minmax(130px, 235px) 1fr; }
 .scenario-picker { display: grid; gap: 4px; max-width: 420px; margin-top: 12px; color: var(--muted); font-size: .9rem; }
 .scenario-picker select { padding: 7px 8px; font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 5px; }
 .upload-form { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; margin-top: 12px; }

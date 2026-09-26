@@ -18,6 +18,7 @@ from collections import defaultdict, deque
 import json
 import os
 import re
+import hmac
 from threading import Lock
 from time import monotonic
 from pathlib import Path
@@ -35,7 +36,7 @@ from checks.runtime_settings import load_detection_settings, save_detection_sett
 from checks.demo_logs import load_log_source, log_sources, save_log_source, store_uploaded_log
 from werkzeug.utils import secure_filename
 from dawgwatch.settings import DetectionSettings
-from dawgwatch.storage import recent_alerts, record_scan
+from dawgwatch.storage import latest_agent_scan, recent_alerts, record_agent_scan, record_scan
 
 app = Flask(
     __name__,
@@ -53,6 +54,8 @@ GEMINI_REQUEST_LIMIT = 5
 GEMINI_WINDOW_SECONDS = 60
 _gemini_requests: dict[str, deque[float]] = defaultdict(deque)
 _gemini_request_lock = Lock()
+AGENT_CHECK_NAMES = {"Local Port Assessor", "Listening Services", "System Hardening"}
+DEVICE_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{20,128}\Z")
 
 
 def _settings_request_allowed() -> bool:
@@ -72,6 +75,47 @@ def _gemini_request_allowed() -> bool:
             return False
         calls.append(now)
         return True
+
+
+def _agent_request_allowed() -> bool:
+    """Authenticate the local helper without exposing its key to browsers."""
+    expected = os.environ.get("PORT_A_POTTY_AGENT_KEY", "")
+    supplied = request.headers.get("Authorization", "")
+    if supplied.startswith("Bearer "):
+        supplied = supplied[7:]
+    return bool(expected and supplied and hmac.compare_digest(expected, supplied))
+
+
+def _safe_agent_results(value) -> list[dict[str, object]] | None:
+    """Accept only the read-only result shape rendered by the hosted dashboard."""
+    if not isinstance(value, list) or len(value) > 12:
+        return None
+    cleaned = []
+    for result in value:
+        if not isinstance(result, dict) or result.get("name") not in AGENT_CHECK_NAMES:
+            return None
+        name = result["name"]
+        description = result.get("description", "")
+        summary = result.get("summary", "")
+        status = result.get("status", "error")
+        items = result.get("items", [])
+        if not all(isinstance(text, str) and len(text) <= 2000 for text in (description, summary)):
+            return None
+        if status not in {"warning", "review", "info", "ok", "error"} or not isinstance(items, list) or len(items) > 100:
+            return None
+        safe_items = []
+        for item in items:
+            if not isinstance(item, dict):
+                return None
+            label, detail, item_status = item.get("label", ""), item.get("detail", ""), item.get("status", "error")
+            if (not isinstance(label, str) or not isinstance(detail, str) or len(label) > 500 or len(detail) > 4000
+                    or item_status not in {"warning", "review", "info", "ok", "error"}):
+                return None
+            # Deliberately do not accept local firewall action metadata. The
+            # hosted dashboard is observational and cannot change this PC.
+            safe_items.append({"label": label, "detail": detail, "status": item_status})
+        cleaned.append({"name": name, "description": description, "summary": summary, "status": status, "items": safe_items})
+    return cleaned
 
 
 def _built_in_explanation(findings: list[dict[str, str]], reason: str) -> str:
@@ -124,6 +168,41 @@ def api_scan():
 def alert_history():
     """Recent Tiger Data findings for a future history view."""
     return jsonify(alerts=recent_alerts())
+
+
+@app.post("/api/agent/scan")
+def agent_scan_upload():
+    """Receive a read-only local scan from the downloadable desktop helper."""
+    if not os.environ.get("PORT_A_POTTY_AGENT_KEY"):
+        return jsonify(error="The local helper has not been configured on this deployment."), 503
+    if not _agent_request_allowed():
+        return jsonify(error="The local helper key was rejected."), 401
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify(error="Expected a JSON scan payload."), 400
+    device_id = payload.get("device_id", "")
+    hostname = payload.get("hostname", "")
+    results = _safe_agent_results(payload.get("results"))
+    if not isinstance(device_id, str) or not DEVICE_ID_PATTERN.fullmatch(device_id):
+        return jsonify(error="Invalid helper pairing ID."), 400
+    if not isinstance(hostname, str) or not hostname.strip() or len(hostname) > 255:
+        return jsonify(error="Invalid helper computer name."), 400
+    if results is None:
+        return jsonify(error="Invalid local scan results."), 400
+    if not record_agent_scan(device_id, hostname.strip(), results):
+        return jsonify(error="Tiger Data could not save this local scan."), 503
+    return jsonify(saved=True), 202
+
+
+@app.get("/api/agent/scan/<device_id>")
+def agent_scan_latest(device_id: str):
+    """Get the newest result after the user has paired this browser to a helper."""
+    if not DEVICE_ID_PATTERN.fullmatch(device_id):
+        abort(404)
+    scan = latest_agent_scan(device_id)
+    if scan is None:
+        return jsonify(error="No local scan received yet. Run the Port a Potty Helper and try again."), 404
+    return jsonify(scan)
 
 
 @app.post("/api/assistant")

@@ -44,6 +44,15 @@ CREATE TABLE IF NOT EXISTS port_a_potty_alerts (
 SELECT create_hypertable('port_a_potty_alerts', 'observed_at', if_not_exists => TRUE);
 CREATE INDEX IF NOT EXISTS port_a_potty_alerts_host_time_idx
     ON port_a_potty_alerts (host, observed_at DESC);
+CREATE TABLE IF NOT EXISTS port_a_potty_agent_scans (
+    observed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    device_id TEXT NOT NULL,
+    hostname TEXT NOT NULL,
+    results JSONB NOT NULL,
+    PRIMARY KEY (device_id, observed_at)
+);
+CREATE INDEX IF NOT EXISTS port_a_potty_agent_scans_device_time_idx
+    ON port_a_potty_agent_scans (device_id, observed_at DESC);
 """
 
 
@@ -195,3 +204,52 @@ def recent_alerts(limit: int = 20) -> list[dict[str, Any]]:
                 ]
     except psycopg.Error:
         return []
+
+
+def record_agent_scan(device_id: str, hostname: str, results: list[dict[str, Any]]) -> bool:
+    """Store one read-only scan uploaded by the paired desktop helper."""
+    connection = _connection()
+    if connection is None:
+        return False
+    try:
+        with connection:
+            with connection.cursor() as cursor:
+                _ensure_schema(cursor)
+                cursor.execute(
+                    """INSERT INTO port_a_potty_agent_scans (device_id, hostname, results)
+                       VALUES (%s, %s, %s)""",
+                    (device_id, hostname, json.dumps(results)),
+                )
+        return True
+    except psycopg.Error:
+        return False
+
+
+def latest_agent_scan(device_id: str) -> dict[str, Any] | None:
+    """Return the newest scan for a paired device, if Tiger Data is reachable."""
+    connection = _connection()
+    if connection is None:
+        return None
+    try:
+        with connection:
+            with connection.cursor() as cursor:
+                _ensure_schema(cursor)
+                cursor.execute(
+                    """SELECT observed_at, hostname, results
+                       FROM port_a_potty_agent_scans
+                       WHERE device_id = %s
+                       ORDER BY observed_at DESC LIMIT 1""",
+                    (device_id,),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    return None
+                observed_at, hostname, results = row
+                return {
+                    "device_id": device_id,
+                    "observed_at": observed_at.isoformat(),
+                    "hostname": hostname,
+                    "results": results,
+                }
+    except psycopg.Error:
+        return None
