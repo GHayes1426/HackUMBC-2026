@@ -14,7 +14,10 @@ Folders: templates live in html/ and static files in frontend/
 """
 
 from dataclasses import asdict
+import json
+import os
 from pathlib import Path
+from urllib import parse, request as urlrequest
 
 from flask import Flask, abort, jsonify, render_template, request
 
@@ -39,12 +42,21 @@ app = Flask(
 # the Host check stops DNS-rebinding sites, and the custom header can't be
 # sent cross-origin without a CORS preflight, which Flask never approves.
 ALLOWED_HOSTS = {f"127.0.0.1:{DASHBOARD_PORT}", f"localhost:{DASHBOARD_PORT}"}
+HOSTED_MODE = bool(os.environ.get("VERCEL")) or os.environ.get("PORT_A_POTTY_HOSTED") == "1"
+
+
+def current_results():
+    """Run local checks, keeping cloud deployments focused on uploaded/demo logs."""
+    results = run_all()
+    if HOSTED_MODE:
+        results = [result for result in results if result["name"] == "IOC / CVE Analyzer"]
+    record_scan(results, host="vercel" if HOSTED_MODE else "local")
+    return results
 
 
 @app.route("/")
 def dashboard():
-    results = run_all()
-    record_scan(results)
+    results = current_results()
     return render_template(
         "index.html",
         results=results,
@@ -57,8 +69,7 @@ def dashboard():
 
 @app.route("/api/scan")
 def api_scan():
-    results = run_all()
-    record_scan(results)
+    results = current_results()
     return jsonify(
         results=results,
         summary=build_summary(results),
@@ -70,6 +81,37 @@ def api_scan():
 def alert_history():
     """Recent Tiger Data findings for a future history view."""
     return jsonify(alerts=recent_alerts())
+
+
+@app.post("/api/assistant")
+def assistant():
+    """Gemini-backed security explanation; the browser never receives the API key."""
+    payload = request.get_json(silent=True)
+    question = payload.get("question", "") if isinstance(payload, dict) else ""
+    if not isinstance(question, str) or not question.strip() or len(question) > 1200:
+        return jsonify(error="Ask a short security question (up to 1,200 characters)."), 400
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return jsonify(error="Gemini is not configured on this deployment."), 503
+    findings = [
+        {"check": result["name"], "label": item["label"], "detail": item["detail"], "status": item["status"]}
+        for result in current_results()
+        for item in result.get("items", []) if item.get("status") in {"warning", "review"}
+    ]
+    prompt = (
+        "You are Port a Potty, a defensive cybersecurity demo assistant. Explain findings plainly, "
+        "avoid claiming certainty, and give safe remediation steps. Do not provide offensive instructions.\n"
+        f"Current findings: {json.dumps(findings)}\nUser question: {question.strip()}"
+    )
+    body = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode()
+    endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + parse.quote(api_key, safe="")
+    try:
+        response = urlrequest.urlopen(urlrequest.Request(endpoint, data=body, headers={"Content-Type": "application/json"}), timeout=20)
+        data = json.load(response)
+        answer = data["candidates"][0]["content"]["parts"][0]["text"]
+    except Exception:
+        return jsonify(error="Gemini could not generate an explanation right now."), 502
+    return jsonify(answer=answer)
 
 
 @app.route("/api/settings/detection", methods=["GET", "POST"])
