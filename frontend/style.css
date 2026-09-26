@@ -308,6 +308,11 @@ main.refreshing { opacity: 0.55; transition: opacity 0.15s; pointer-events: none
 .assistant-heading strong { font-size: .92rem; }
 .assistant-heading span { color: var(--muted); font-size: .78rem; }
 .assistant-heading .assistant-voice-status { color: var(--series); }
+.assistant-voice-indicator { display: inline-flex; align-items: center; gap: 6px; width: fit-content; color: var(--ok); font-size: .8rem; font-weight: 650; }
+.voice-state-dot { width: 9px; height: 9px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 45%, transparent); animation: voice-pulse 1.35s infinite; }
+.assistant-voice-indicator[data-state="thinking"] { color: var(--review); }
+.assistant-voice-indicator[data-state="responding"] { color: var(--series); }
+@keyframes voice-pulse { 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
 .assistant-messages { flex: 1 1 auto; min-height: 150px; overflow-y: auto; display: grid; gap: 7px; margin-bottom: 9px; }
 .assistant-message { margin: 0; padding: 7px 9px; border-radius: 8px; background: var(--track); font-size: .86rem; white-space: pre-wrap; }
 .assistant-message.user { justify-self: end; background: color-mix(in srgb, var(--series) 16%, var(--panel)); }

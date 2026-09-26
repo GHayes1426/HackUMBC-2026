@@ -114,7 +114,7 @@ def assistant():
     # The ``-latest`` alias keeps the demo on the currently enabled Flash text
     # model for this API key. Flash Lite is a lower-latency fallback when the
     # primary provider endpoint is temporarily overloaded.
-    models = [os.environ.get("GEMINI_MODEL", "gemini-flash-latest"), "gemini-2.5-flash-lite"]
+    models = [os.environ.get("GEMINI_MODEL", "gemini-flash-latest"), "gemini-3.5-flash-lite"]
     try:
         answer = None
         for model in dict.fromkeys(models):
@@ -125,6 +125,8 @@ def assistant():
                     answer = data["candidates"][0]["content"]["parts"][0]["text"]
                     break
             except HTTPError as exc:
+                provider_detail = exc.read().decode("utf-8", errors="replace")[:500]
+                app.logger.warning("Gemini model %s failed with HTTP %s: %s", model, exc.code, provider_detail)
                 if exc.code not in {429, 503}:
                     raise
         if not answer:

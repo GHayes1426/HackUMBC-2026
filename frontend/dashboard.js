@@ -198,6 +198,7 @@ function addAssistantMessage(text, role = "assistant") {
 
 async function speakAssistantAnswer(text) {
   if (!window.portAPottyVoiceEnabled) return;
+  window.portAPottySetVoiceState?.("responding", "Responding with ElevenLabs…");
   stopAssistantVoice();
   try {
     const response = await fetch("/api/assistant/speak", {
@@ -225,6 +226,7 @@ async function askAssistant(form) {
   const submit = form.querySelector("button[type=submit]");
   addAssistantMessage(question, "user");
   const pending = addAssistantMessage("Port a Potty is analyzing the findings…", "assistant pending");
+  window.portAPottySetVoiceState?.("thinking", "Thinking with Gemini…");
   input.value = "";
   submit.disabled = true;
   try {
@@ -254,6 +256,8 @@ function setupVoiceInput() {
   const input = document.getElementById("assistant-input");
   const form = document.getElementById("assistant-form");
   const voiceStatus = document.getElementById("assistant-voice-status");
+  const voiceIndicator = document.getElementById("assistant-voice-indicator");
+  const voiceState = document.getElementById("assistant-voice-state");
   const canRecord = Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
   let stream, recorder, monitor, audioContext, speechMode = false;
   window.portAPottyVoiceEnabled = false;
@@ -263,6 +267,12 @@ function setupVoiceInput() {
     return;
   }
   const setStatus = (message) => { if (voiceStatus) voiceStatus.textContent = message; };
+  const setVoiceState = (state, label) => {
+    if (!voiceIndicator || !voiceState) return;
+    voiceIndicator.hidden = !speechMode;
+    voiceIndicator.dataset.state = state;
+    voiceState.textContent = label;
+  };
   const setModeControls = (active) => {
     button.hidden = active;
     textMode.hidden = !active;
@@ -304,6 +314,7 @@ function setupVoiceInput() {
     const samples = new Uint8Array(analyser.fftSize);
     recorder.start();
     setStatus("Speech mode is on — speak naturally. I will respond after you pause.");
+    setVoiceState("listening", "Listening…");
     monitor = setInterval(() => {
       analyser.getByteTimeDomainData(samples);
       const volume = samples.reduce((sum, value) => sum + Math.abs(value - 128), 0) / samples.length / 128;
@@ -321,6 +332,7 @@ function setupVoiceInput() {
       speechMode = true;
       window.portAPottyVoiceEnabled = true;
       setModeControls(true);
+      setVoiceState("listening", "Listening…");
       listenForTurn();
     } catch (err) {
       const reason = err?.name || "UnknownError";
@@ -337,9 +349,11 @@ function setupVoiceInput() {
     window.portAPottyVoiceEnabled = false;
     stopAssistantVoice();
     setModeControls(false);
+    if (voiceIndicator) voiceIndicator.hidden = true;
     setStatus("Text mode is on. Type a question below.");
   }
   window.portAPottyResumeSpeechMode = () => { if (speechMode) listenForTurn(); };
+  window.portAPottySetVoiceState = setVoiceState;
   button.addEventListener("click", startSpeechMode);
   textMode.addEventListener("click", stopSpeechMode);
 }
