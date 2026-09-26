@@ -162,5 +162,21 @@
     <p>No checks registered. Import one in <code>checks/__init__.py</code>.</p>
     {% endfor %}
   </main>
+
+  <aside class="assistant-dock" aria-label="Port a Potty assistant">
+    <div class="assistant-heading">
+      <strong>Port a Potty Assistant</strong>
+      <span>Ask about the current log findings</span>
+    </div>
+    <div id="assistant-messages" class="assistant-messages" aria-live="polite">
+      <p class="assistant-message">Ask what an alert means or how to remediate it.</p>
+    </div>
+    <form id="assistant-form" class="assistant-form">
+      <input id="assistant-input" name="question" maxlength="1200" autocomplete="off"
+             placeholder="Ask about a finding..." aria-label="Question for the assistant" required>
+      <button type="submit">Send</button>
+      <button type="button" id="assistant-talk" class="assistant-talk" aria-pressed="false">Press to unmute</button>
+    </form>
+  </aside>
 </body>
 </html>

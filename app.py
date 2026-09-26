@@ -45,6 +45,11 @@ ALLOWED_HOSTS = {f"127.0.0.1:{DASHBOARD_PORT}", f"localhost:{DASHBOARD_PORT}"}
 HOSTED_MODE = bool(os.environ.get("VERCEL")) or os.environ.get("PORT_A_POTTY_HOSTED") == "1"
 
 
+def _settings_request_allowed() -> bool:
+    """Accept same-origin dashboard writes in Vercel and local development."""
+    return request.headers.get("X-Dashboard") == "1" and (HOSTED_MODE or request.host in ALLOWED_HOSTS)
+
+
 def current_results():
     """Run local checks, keeping cloud deployments focused on uploaded/demo logs."""
     results = run_all()
@@ -118,7 +123,7 @@ def assistant():
 def detection_settings():
     if request.method == "GET":
         return jsonify(asdict(load_detection_settings()))
-    if request.host not in ALLOWED_HOSTS or request.headers.get("X-Dashboard") != "1":
+    if not _settings_request_allowed():
         abort(403)
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
@@ -133,7 +138,7 @@ def detection_settings():
 
 @app.post("/api/settings/log-source")
 def log_source():
-    if request.host not in ALLOWED_HOSTS or request.headers.get("X-Dashboard") != "1":
+    if not _settings_request_allowed():
         abort(403)
     payload = request.get_json(silent=True)
     source = payload.get("source") if isinstance(payload, dict) else None
@@ -161,7 +166,10 @@ def upload_log():
         text = content.decode("utf-8")
     except UnicodeDecodeError:
         return jsonify(error="The log must be UTF-8 text."), 400
-    source = store_uploaded_log(name, text)
+    try:
+        source = store_uploaded_log(name, text)
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 503
     return jsonify(source=source, name=name)
 
 

@@ -21,6 +21,17 @@ PROJECT_ROOT = Path(getattr(sys, "executable", Path(__file__).resolve())).parent
 load_dotenv(PROJECT_ROOT / ".env")
 
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS port_a_potty_settings (
+    setting_key TEXT PRIMARY KEY,
+    value JSONB NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS port_a_potty_uploaded_logs (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS port_a_potty_alerts (
     observed_at TIMESTAMPTZ NOT NULL,
     host TEXT NOT NULL,
@@ -34,6 +45,92 @@ SELECT create_hypertable('port_a_potty_alerts', 'observed_at', if_not_exists => 
 CREATE INDEX IF NOT EXISTS port_a_potty_alerts_host_time_idx
     ON port_a_potty_alerts (host, observed_at DESC);
 """
+
+
+def _connection():
+    url = os.environ.get("TIGER_DATABASE_URL")
+    return psycopg.connect(url, connect_timeout=8) if url else None
+
+
+def _ensure_schema(cursor) -> None:
+    cursor.execute(_SCHEMA)
+
+
+def get_setting(key: str) -> dict[str, Any] | None:
+    connection = _connection()
+    if connection is None:
+        return None
+    try:
+        with connection:
+            with connection.cursor() as cursor:
+                _ensure_schema(cursor)
+                cursor.execute("SELECT value FROM port_a_potty_settings WHERE setting_key = %s", (key,))
+                row = cursor.fetchone()
+                return row[0] if row else None
+    except psycopg.Error:
+        return None
+
+
+def put_setting(key: str, value: dict[str, Any]) -> bool:
+    connection = _connection()
+    if connection is None:
+        return False
+    try:
+        with connection:
+            with connection.cursor() as cursor:
+                _ensure_schema(cursor)
+                cursor.execute("""INSERT INTO port_a_potty_settings (setting_key, value) VALUES (%s, %s)
+                    ON CONFLICT (setting_key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()""", (key, json.dumps(value)))
+        return True
+    except psycopg.Error:
+        return False
+
+
+def save_uploaded_log(name: str, content: str) -> str | None:
+    from uuid import uuid4
+    connection = _connection()
+    if connection is None:
+        return None
+    log_id = uuid4().hex
+    try:
+        with connection:
+            with connection.cursor() as cursor:
+                _ensure_schema(cursor)
+                cursor.execute("INSERT INTO port_a_potty_uploaded_logs (id, name, content) VALUES (%s, %s, %s)", (log_id, name, content))
+                cursor.execute("""DELETE FROM port_a_potty_uploaded_logs WHERE id IN (
+                    SELECT id FROM port_a_potty_uploaded_logs ORDER BY created_at DESC OFFSET 8)""")
+        return log_id
+    except psycopg.Error:
+        return None
+
+
+def uploaded_logs() -> list[dict[str, str]]:
+    connection = _connection()
+    if connection is None:
+        return []
+    try:
+        with connection:
+            with connection.cursor() as cursor:
+                _ensure_schema(cursor)
+                cursor.execute("SELECT id, name FROM port_a_potty_uploaded_logs ORDER BY created_at DESC LIMIT 8")
+                return [{"id": row[0], "name": row[1]} for row in cursor.fetchall()]
+    except psycopg.Error:
+        return []
+
+
+def uploaded_log_content(log_id: str) -> str | None:
+    connection = _connection()
+    if connection is None:
+        return None
+    try:
+        with connection:
+            with connection.cursor() as cursor:
+                _ensure_schema(cursor)
+                cursor.execute("SELECT content FROM port_a_potty_uploaded_logs WHERE id = %s", (log_id,))
+                row = cursor.fetchone()
+                return row[0] if row else None
+    except psycopg.Error:
+        return None
 
 
 def record_scan(results: list[dict[str, Any]], host: str = "local") -> bool:

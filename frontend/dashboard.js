@@ -168,3 +168,95 @@ document.addEventListener("change", (event) => {
   const select = event.target.closest("#log-source");
   if (select) saveLogSource(select);
 });
+
+function addAssistantMessage(text, role = "assistant") {
+  const messages = document.getElementById("assistant-messages");
+  if (!messages) return;
+  const message = document.createElement("p");
+  message.className = `assistant-message ${role}`;
+  message.textContent = text;
+  messages.append(message);
+  messages.scrollTop = messages.scrollHeight;
+}
+
+function speakAssistantAnswer(text) {
+  if (!window.portAPottyVoiceEnabled || !("speechSynthesis" in window)) return;
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = "en-US";
+  window.speechSynthesis.speak(utterance);
+}
+
+async function askAssistant(form) {
+  const input = form.querySelector("#assistant-input");
+  const question = input.value.trim();
+  if (!question) return;
+  const submit = form.querySelector("button[type=submit]");
+  addAssistantMessage(question, "user");
+  input.value = "";
+  submit.disabled = true;
+  try {
+    const response = await fetch("/api/assistant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "The assistant could not respond.");
+    addAssistantMessage(data.answer, "assistant");
+    speakAssistantAnswer(data.answer);
+  } catch (err) {
+    addAssistantMessage(err.message, "assistant error");
+  } finally {
+    submit.disabled = false;
+    input.focus();
+  }
+}
+
+function setupVoiceInput() {
+  const button = document.getElementById("assistant-talk");
+  const input = document.getElementById("assistant-input");
+  if (!button || !input) return;
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let recognition;
+  let listening = false;
+  window.portAPottyVoiceEnabled = false;
+  if (!Recognition) {
+    button.textContent = "Voice unavailable";
+    button.disabled = true;
+    button.title = "Your browser does not provide speech recognition.";
+    return;
+  }
+  recognition = new Recognition();
+  recognition.lang = "en-US";
+  recognition.interimResults = false;
+  recognition.continuous = false;
+  recognition.onresult = (event) => {
+    input.value = event.results[0][0].transcript;
+    input.focus();
+  };
+  recognition.onerror = () => toast("Microphone input was unavailable. Check browser microphone permission.", "error");
+  recognition.onend = () => {
+    listening = false;
+    button.textContent = "Talk to assistant";
+    button.setAttribute("aria-pressed", "false");
+  };
+  button.addEventListener("click", () => {
+    window.portAPottyVoiceEnabled = true;
+    if (listening) {
+      recognition.stop();
+      return;
+    }
+    listening = true;
+    button.textContent = "Listening…";
+    button.setAttribute("aria-pressed", "true");
+    recognition.start();
+  });
+}
+
+document.addEventListener("submit", (event) => {
+  const assistantForm = event.target.closest("#assistant-form");
+  if (assistantForm) { event.preventDefault(); askAssistant(assistantForm); }
+});
+
+setupVoiceInput();

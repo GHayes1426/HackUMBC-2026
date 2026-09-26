@@ -283,6 +283,32 @@ a { color: inherit; }
 
 main.refreshing { opacity: 0.55; transition: opacity 0.15s; pointer-events: none; }
 
+/* Floating assistant stays available as the dashboard refreshes its results. */
+.assistant-dock {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 8;
+  width: min(410px, calc(100vw - 32px));
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .18);
+}
+.assistant-heading { display: grid; gap: 1px; margin-bottom: 8px; }
+.assistant-heading strong { font-size: .92rem; }
+.assistant-heading span { color: var(--muted); font-size: .78rem; }
+.assistant-messages { max-height: 150px; overflow-y: auto; display: grid; gap: 7px; margin-bottom: 9px; }
+.assistant-message { margin: 0; padding: 7px 9px; border-radius: 8px; background: var(--track); font-size: .86rem; white-space: pre-wrap; }
+.assistant-message.user { justify-self: end; background: color-mix(in srgb, var(--series) 16%, var(--panel)); }
+.assistant-message.error { border-left: 3px solid var(--warning); }
+.assistant-form { display: grid; grid-template-columns: 1fr auto; gap: 7px; }
+.assistant-form input { min-width: 0; padding: 8px; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 6px; font: inherit; }
+.assistant-form button { padding: 8px 10px; border: 0; border-radius: 6px; color: #fff; background: var(--series); font: inherit; font-weight: 600; cursor: pointer; }
+.assistant-form button:disabled { cursor: not-allowed; opacity: .6; }
+.assistant-talk { grid-column: 1 / -1; background: var(--text) !important; }
+
 .port-action {
   font: inherit;
   font-size: 0.85rem;
@@ -306,4 +332,5 @@ main.refreshing { opacity: 0.55; transition: opacity 0.15s; pointer-events: none
   .overview, .panel { padding: 14px; }
   .bar-row { grid-template-columns: 1fr; gap: 2px; }
   .bar-track { grid-template-columns: 1fr 6.5em; }
+  .assistant-dock { bottom: 10px; right: 10px; width: calc(100vw - 20px); }
 }

@@ -34,6 +34,12 @@ def load_demo_log():
     """Return lines and a label for the selected bundled or uploaded log."""
     source = load_log_source()
     if source.startswith("upload:"):
+        if os.environ.get("VERCEL"):
+            from dawgwatch.storage import uploaded_log_content
+            content = uploaded_log_content(source[7:])
+            upload = next((item for item in _uploads() if item["id"] == source[7:]), None)
+            if content is not None and upload:
+                return content.splitlines(), f"UPLOADED LOG: {upload['name']}", True
         upload = next((item for item in _uploads() if item["id"] == source[7:]), None)
         if upload:
             path = UPLOAD_DIR / upload["stored_name"]
@@ -72,9 +78,15 @@ def log_sources() -> list[tuple[str, str]]:
 
 
 def load_log_source() -> str:
+    if os.environ.get("VERCEL"):
+        from dawgwatch.storage import get_setting
+        selected = (get_setting("log_source") or {}).get("source")
+    else:
+        selected = None
     try:
-        saved = json.loads(SCENARIO_STATE_PATH.read_text(encoding="utf-8"))
-        selected = saved.get("source")
+        if selected is None:
+            saved = json.loads(SCENARIO_STATE_PATH.read_text(encoding="utf-8"))
+            selected = saved.get("source")
     except (OSError, ValueError, AttributeError):
         selected = None
     valid = {source for source, _ in log_sources()}
@@ -86,12 +98,24 @@ def load_log_source() -> str:
 def save_log_source(source: str) -> None:
     if source not in {item[0] for item in log_sources()}:
         raise ValueError("Unknown log source.")
+    if os.environ.get("VERCEL"):
+        from dawgwatch.storage import put_setting
+        if put_setting("log_source", {"source": source}):
+            return
     SCENARIO_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     SCENARIO_STATE_PATH.write_text(json.dumps({"source": source}) + "\n", encoding="utf-8")
 
 
 def store_uploaded_log(name: str, text: str) -> str:
     """Store a validated text log and retain only the newest eight uploads."""
+    if os.environ.get("VERCEL"):
+        from dawgwatch.storage import save_uploaded_log
+        entry_id = save_uploaded_log(name, text)
+        if entry_id:
+            source = f"upload:{entry_id}"
+            save_log_source(source)
+            return source
+        raise ValueError("Tiger Data is unavailable; the upload was not saved.")
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     entry_id = uuid4().hex
     stored_name = f"{entry_id}.log"
@@ -107,6 +131,9 @@ def store_uploaded_log(name: str, text: str) -> str:
 
 
 def _uploads() -> list[dict[str, str]]:
+    if os.environ.get("VERCEL"):
+        from dawgwatch.storage import uploaded_logs
+        return [{**item, "stored_name": ""} for item in uploaded_logs()]
     try:
         data = json.loads(UPLOAD_INDEX_PATH.read_text(encoding="utf-8"))
     except (OSError, ValueError):
