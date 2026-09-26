@@ -114,7 +114,10 @@ def assistant():
         response = urlrequest.urlopen(urlrequest.Request(endpoint, data=body, headers={"Content-Type": "application/json"}), timeout=20)
         data = json.load(response)
         answer = data["candidates"][0]["content"]["parts"][0]["text"]
-    except Exception:
+    except Exception as exc:
+        # Keep the key and prompt out of the response, but retain enough detail
+        # in Vercel logs to diagnose provider configuration problems.
+        app.logger.warning("Gemini request failed: %s", exc)
         return jsonify(error="Gemini could not generate an explanation right now."), 502
     return jsonify(answer=answer)
 
