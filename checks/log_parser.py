@@ -28,14 +28,14 @@ def load_log_lines():
         source    -- path of the file that was read, for display
         is_sample -- True if we fell back to SAMPLE_LOG_PATH
 
-    TODO:
-      - Loop over REAL_LOG_PATHS; for the first one that exists and can
-        be opened, return its lines with is_sample=False. Catch
-        PermissionError / OSError (auth.log usually needs root) and
-        move on to the next path.
-      - Otherwise read SAMPLE_LOG_PATH and return is_sample=True.
+    auth.log usually needs root, so unreadable real logs are skipped.
     """
-    return [], str(SAMPLE_LOG_PATH), True
+    for path in REAL_LOG_PATHS:
+        try:
+            return path.read_text(errors="replace").splitlines(), str(path), False
+        except OSError:
+            continue
+    return SAMPLE_LOG_PATH.read_text().splitlines(), str(SAMPLE_LOG_PATH), True
 
 
 def parse_failed_logins(lines):
@@ -44,9 +44,10 @@ def parse_failed_logins(lines):
         [{"user": "root", "ip": "203.0.113.45", "raw": "<original line>"}, ...]
 
     Non-matching lines are skipped.
-
-    TODO:
-      - For each line, m = FAILED_SSH_PATTERN.search(line)
-      - If m: append {"user": m["user"], "ip": m["ip"], "raw": line.strip()}
     """
-    return []
+    events = []
+    for line in lines:
+        m = FAILED_SSH_PATTERN.search(line)
+        if m:
+            events.append({"user": m["user"], "ip": m["ip"], "raw": line.strip()})
+    return events

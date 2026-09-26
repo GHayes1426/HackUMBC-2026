@@ -23,6 +23,28 @@ Then open http://127.0.0.1:5000/ — it scans on every page load.
 - **IOC / CVE Analyzer** (`checks/ioc_analyzer.py`): two detection
   rules, described in detail below.
 
+- **Listening Services** (`checks/listening_services.py`): lists every
+  program accepting TCP connections (via `lsof`) and flags any that
+  listen on all interfaces, i.e. are reachable from other devices on
+  the network. Without admin rights it only sees the current user's
+  programs.
+
+- **System Hardening** (`checks/hardening.py`): reads the macOS
+  firewall, stealth mode, FileVault, Gatekeeper and SIP status (ufw on
+  Linux) and says how to turn on anything that's off.
+
+- **Threat summary** (`checks/summary.py`): the top of the page shows
+  the total number of potential threats, a tile per check, a
+  threats-by-category bar chart, and any chart a check provides (the
+  IOC analyzer adds failed SSH logins per source IP).
+
+- **Close / Reopen port buttons** (`checks/port_control.py`): open
+  risky or network-exposed ports get a *Close port* button. It adds a
+  firewall rule blocking the port (macOS pf, with the normal admin
+  password prompt; iptables on Linux). The program keeps running, so
+  *Reopen port* just removes the rule. Closed ports are remembered in
+  `.state/closed_ports.json`. Port 5000 (the dashboard) can't be closed.
+
 ### IOC / CVE Analyzer — detection logic
 
 **Rule 1: Brute-force SSH detection.** Parses SSH auth-log lines
@@ -80,7 +102,12 @@ something new:
                 "summary": "Short headline",
                 "items": [
                     {"label": "...", "status": "ok", "detail": "..."},
+                    # optional: add a Close/Reopen button to an item
+                    # "action": {"kind": "close", "port": 1234},
                 ],
+                # optional: a bar chart in the Threat summary
+                # "chart": {"title": "...", "note": "...",
+                #           "bars": [{"label": "...", "value": 3, "flagged": True}]},
             }
     ```
 
@@ -92,8 +119,6 @@ something new:
 
 - `remediation_links.py` — clickable links next to open ports
   explaining how to close them
-- `firewall_check.py` — verify the OS firewall (ufw/Windows
-  Defender) is enabled
 - PDF export button — generate a report of the current scan
   (natural fit for the pdf skill if you want help with this later)
 - Expand `CVE_PORT_MAP` with more entries, or swap it for a live

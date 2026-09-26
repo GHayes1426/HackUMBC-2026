@@ -2,27 +2,83 @@
 <!--
   Dashboard page (Jinja template rendered by app.py's "/" route).
 
-  Receives `results`: the list from checks.base.run_all(). Each entry is
-  {name, description, status, summary, items}. The page loops over it, so
-  new checks show up without editing this file.
+  Receives:
+    results -- list from checks.base.run_all(); each entry is
+               {name, description, status, summary, items[, chart]}
+    summary -- dict from checks.summary.build_summary(results)
+
+  Both are looped over, so new checks show up without editing this file.
+  An item with an "action" gets a Close/Reopen button, handled by
+  frontend/dashboard.js, which also swaps in a fresh copy of <main> after
+  each change (no full reload) and shows notifications in #toasts.
 
   Note: use check["items"], not check.items. On a dict, Jinja resolves
   .items to the dict's built-in items() method.
 -->
+{% set status_icon = {"ok": "✓", "warning": "!", "error": "×"} %}
+{% set status_word = {"ok": "Clear", "warning": "Needs attention", "error": "Check failed"} %}
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Network Security Dashboard</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="{{ url_for('static', filename='dashboard.js') }}" defer></script>
 </head>
 <body>
   <header>
     <h1>Network Security Dashboard</h1>
-    <p>Assessing <code>127.0.0.1</code> &middot; <a href="{{ url_for('dashboard') }}">Rescan</a></p>
+    <p>Assessing <code>127.0.0.1</code> &middot; <a href="{{ url_for('dashboard') }}" id="rescan">Rescan</a></p>
   </header>
 
-  <main>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <main id="dashboard">
+
+    <section class="overview" aria-labelledby="overview-title">
+      <h2 id="overview-title">Threat summary</h2>
+
+      <div class="hero">
+        <span class="hero-value">{{ summary.total }}</span>
+        <span class="hero-label">
+          potential threat{{ "" if summary.total == 1 else "s" }} found
+          <span class="muted">&middot; {{ summary.checks_clear }} of {{ summary.categories|length }} checks clear</span>
+        </span>
+      </div>
+
+      <div class="tiles">
+        {% for c in summary.categories %}
+        <div class="tile status-{{ c.status }}">
+          <span class="tile-name">{{ c.name }}</span>
+          <span class="tile-value">{{ c.findings }}</span>
+          <span class="tile-status"><span class="badge">{{ status_icon[c.status] }}</span>{{ status_word[c.status] }}</span>
+        </div>
+        {% endfor %}
+      </div>
+
+      <div class="charts">
+        {% for chart in summary.charts %}
+        <figure class="chart">
+          <figcaption>
+            <span class="chart-title">{{ chart.title }}</span>
+            <span class="muted">{{ chart.note }}</span>
+          </figcaption>
+          <ul class="bars">
+            {% for bar in chart.bars %}
+            <li class="bar-row{{ ' flagged' if bar.flagged }}" title="{{ bar.label }}: {{ bar.value }}{{ ' (flagged)' if bar.flagged }}" tabindex="0">
+              <span class="bar-label">{{ bar.label }}</span>
+              <span class="bar-track">
+                <span class="bar-scale"><span class="bar" style="width: {{ bar.pct }}%"></span></span>
+                <span class="bar-value">{{ bar.value }}{% if bar.flagged %} <span class="flag">! flagged</span>{% endif %}</span>
+              </span>
+            </li>
+            {% endfor %}
+          </ul>
+        </figure>
+        {% endfor %}
+      </div>
+    </section>
+
     {% for check in results %}
     <section class="panel status-{{ check.status }}">
       <h2>{{ check.name }}</h2>
@@ -35,6 +91,12 @@
           <span class="dot"></span>
           <span class="label">{{ item.label }}</span>
           <span class="detail">{{ item.detail }}</span>
+          {% if item.action %}
+          <button type="button" class="port-action {{ item.action.kind }}"
+                  data-kind="{{ item.action.kind }}" data-port="{{ item.action.port }}">
+            {{ "Close port" if item.action.kind == "close" else "Reopen port" }}
+          </button>
+          {% endif %}
         </li>
         {% endfor %}
       </ul>

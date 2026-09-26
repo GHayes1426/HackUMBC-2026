@@ -8,6 +8,7 @@ that are open, with a plain-text recommendation for each.
 import socket
 
 from checks.base import Check, register
+from checks.port_control import closed_ports
 
 # port -> (service name, why it's risky, recommendation)
 RISKY_PORTS = {
@@ -49,6 +50,7 @@ class PortScanCheck(Check):
         host = "127.0.0.1"
         items = []
         open_count = 0
+        closed_here = closed_ports()
 
         for port, (service, risk, recommendation) in RISKY_PORTS.items():
             is_open = _scan_port(host, port)
@@ -58,6 +60,14 @@ class PortScanCheck(Check):
                     "label": f"Port {port} ({service})",
                     "status": "warning",
                     "detail": f"OPEN — {risk}. {recommendation}.",
+                    "action": {"kind": "close", "port": port},
+                })
+            elif port in closed_here:
+                items.append({
+                    "label": f"Port {port} ({service})",
+                    "status": "ok",
+                    "detail": "Closed by this dashboard (firewall rule). Reopen it if a program needs it.",
+                    "action": {"kind": "reopen", "port": port},
                 })
             else:
                 items.append({

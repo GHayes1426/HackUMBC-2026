@@ -7,4 +7,6 @@ To add a check: create checks/your_check.py, then add one line below.
 """
 
 from checks import port_scan  # noqa: F401
+from checks import listening_services  # noqa: F401
 from checks import ioc_analyzer  # noqa: F401
+from checks import hardening  # noqa: F401

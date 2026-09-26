@@ -12,10 +12,10 @@ in signatures.py.
 """
 
 from checks.base import Check, register
-from checks.detector import detect_brute_force, detect_cve_ports
+from checks.detector import count_failures_by_ip, detect_brute_force, detect_cve_ports
 from checks.log_parser import load_log_lines, parse_failed_logins
 from checks.port_scan import get_open_ports
-from checks.signatures import CVE_PORT_MAP
+from checks.signatures import BRUTE_FORCE_THRESHOLD, CVE_PORT_MAP
 
 
 @register
@@ -28,7 +28,8 @@ class IOCAnalyzerCheck(Check):
 
         # Rule 1: brute-force SSH
         lines, source, is_sample = load_log_lines()
-        brute_force = detect_brute_force(parse_failed_logins(lines))
+        events = parse_failed_logins(lines)
+        brute_force = detect_brute_force(events)
         for finding in brute_force:
             items.append({
                 "label": f"Brute-force source {finding['ip']}",
@@ -64,4 +65,14 @@ class IOCAnalyzerCheck(Check):
         if is_sample:
             summary += " (sample log)"
 
-        return {"status": status, "summary": summary, "items": items}
+        # Optional "chart" key: drawn in the dashboard's Threat Summary section.
+        chart = {
+            "title": "Failed SSH logins by source IP",
+            "note": f"Flagged at {BRUTE_FORCE_THRESHOLD}+ failures" + (" · sample log" if is_sample else ""),
+            "bars": [
+                {"label": ip, "value": count, "flagged": count >= BRUTE_FORCE_THRESHOLD}
+                for ip, count in count_failures_by_ip(events).most_common(8)
+            ],
+        }
+
+        return {"status": status, "summary": summary, "items": items, "chart": chart}
