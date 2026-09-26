@@ -254,6 +254,7 @@ async function askAssistant(form) {
     if (!response.ok) throw new Error(data.error || "The assistant could not respond.");
     pending.remove();
     addAssistantMessage(data.answer, "assistant-answer");
+    if (data.fallback) addAssistantMessage("Using Port a Potty's built-in analysis while Gemini is unavailable.", "assistant fallback");
     await speakAssistantAnswer(data.answer);
     window.portAPottyResumeSpeechMode?.();
   } catch (err) {

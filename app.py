@@ -14,9 +14,12 @@ Folders: templates live in html/ and static files in frontend/
 """
 
 from dataclasses import asdict
+from collections import defaultdict, deque
 import json
 import os
 import re
+from threading import Lock
+from time import monotonic
 from pathlib import Path
 from urllib import parse, request as urlrequest
 from urllib.error import HTTPError
@@ -46,11 +49,43 @@ app = Flask(
 # sent cross-origin without a CORS preflight, which Flask never approves.
 ALLOWED_HOSTS = {f"127.0.0.1:{DASHBOARD_PORT}", f"localhost:{DASHBOARD_PORT}"}
 HOSTED_MODE = bool(os.environ.get("VERCEL")) or os.environ.get("PORT_A_POTTY_HOSTED") == "1"
+GEMINI_REQUEST_LIMIT = 5
+GEMINI_WINDOW_SECONDS = 60
+_gemini_requests: dict[str, deque[float]] = defaultdict(deque)
+_gemini_request_lock = Lock()
 
 
 def _settings_request_allowed() -> bool:
     """Accept same-origin dashboard writes in Vercel and local development."""
     return request.headers.get("X-Dashboard") == "1" and (HOSTED_MODE or request.host in ALLOWED_HOSTS)
+
+
+def _gemini_request_allowed() -> bool:
+    """Allow at most five upstream Gemini calls per client per rolling minute."""
+    client = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",", 1)[0].strip()
+    now = monotonic()
+    with _gemini_request_lock:
+        calls = _gemini_requests[client]
+        while calls and now - calls[0] >= GEMINI_WINDOW_SECONDS:
+            calls.popleft()
+        if len(calls) >= GEMINI_REQUEST_LIMIT:
+            return False
+        calls.append(now)
+        return True
+
+
+def _built_in_explanation(findings: list[dict[str, str]], reason: str) -> str:
+    """Keep the demo useful if an AI provider is unavailable or rate-limited."""
+    parts = [f"Built-in analysis: {reason}"]
+    labels = {item["label"] for item in findings}
+    if "Possible brute-force login activity" in labels:
+        parts.append("Brute-force activity means one source made repeated failed sign-in attempts against an account in a short time. Verify there were no successful logins, block unexpected sources, disable direct root login, and prefer SSH keys.")
+    if "Possible password-spraying activity" in labels:
+        parts.append("Password spraying means one source tried a small number of passwords across many accounts. Review affected accounts, enforce strong unique passwords and MFA, and add sign-in rate limiting.")
+    if not findings:
+        parts.append("No current warning or review findings are present in the selected log. Continue monitoring and keep authentication controls enabled.")
+    parts.append("This is a simulated-log assessment, so treat it as a demonstration of the recommended investigation steps rather than proof of a live attack.")
+    return "\n\n".join(parts)
 
 
 def current_results():
@@ -98,32 +133,33 @@ def assistant():
     question = payload.get("question", "") if isinstance(payload, dict) else ""
     if not isinstance(question, str) or not question.strip() or len(question) > 1200:
         return jsonify(error="Ask a short security question (up to 1,200 characters)."), 400
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        return jsonify(error="Gemini is not configured on this deployment."), 503
     findings = [
         {"check": result["name"], "label": item["label"], "detail": item["detail"], "status": item["status"]}
         for result in current_results()
         for item in result.get("items", []) if item.get("status") in {"warning", "review"}
     ]
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return jsonify(answer=_built_in_explanation(findings, "Gemini is not configured."), fallback=True)
     prompt = (
         "You are Port a Potty, a defensive cybersecurity demo assistant. Explain findings plainly, "
         "avoid claiming certainty, and give safe remediation steps. Do not provide offensive instructions.\n"
         "Use plain text only: no Markdown headings, asterisks, backticks, or hash symbols. "
-        "Use short paragraphs and simple numbered steps when useful.\n"
+        "Use short paragraphs and simple numbered steps when useful. Keep the response below 300 words.\n"
         f"Current findings: {json.dumps(findings)}\nUser question: {question.strip()}"
     )
     body = json.dumps({
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"maxOutputTokens": 1400},
+        "generationConfig": {"maxOutputTokens": 450},
     }).encode()
-    # The ``-latest`` alias keeps the demo on the currently enabled Flash text
-    # model for this API key. Flash Lite is a lower-latency fallback when the
-    # primary provider endpoint is temporarily overloaded.
-    models = [os.environ.get("GEMINI_MODEL", "gemini-flash-latest"), "gemini-3.5-flash-lite"]
+    # Flash Lite is the economical default. The general Flash alias is a
+    # fallback if the Lite endpoint is temporarily unavailable.
+    models = [os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite"), "gemini-flash-latest"]
     try:
         answer = None
         for model in dict.fromkeys(models):
+            if not _gemini_request_allowed():
+                return jsonify(answer=_built_in_explanation(findings, "Gemini is limited to five requests per minute."), fallback=True)
             endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{parse.quote(model, safe='-._')}:generateContent?key=" + parse.quote(api_key, safe="")
             try:
                 with urlrequest.urlopen(urlrequest.Request(endpoint, data=body, headers={"Content-Type": "application/json"}), timeout=20) as response:
@@ -134,6 +170,8 @@ def assistant():
                     answer = re.sub(r"(?m)^#{1,6}\s*", "", answer)
                     answer = re.sub(r"\*{1,3}([^*]+)\*{1,3}", r"\1", answer)
                     answer = re.sub(r"(?m)^\s*[-*]\s+", "• ", answer)
+                    words = answer.split()
+                    answer = " ".join(words[:300])
                     break
             except HTTPError as exc:
                 provider_detail = exc.read().decode("utf-8", errors="replace")[:500]
@@ -146,7 +184,7 @@ def assistant():
         # Keep the key and prompt out of the response, but retain enough detail
         # in Vercel logs to diagnose provider configuration problems.
         app.logger.warning("Gemini request failed: %s", exc)
-        return jsonify(error="Gemini could not generate an explanation right now."), 502
+        return jsonify(answer=_built_in_explanation(findings, "Gemini is temporarily unavailable."), fallback=True)
     return jsonify(answer=answer)
 
 
