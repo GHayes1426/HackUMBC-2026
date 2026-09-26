@@ -109,7 +109,10 @@ def assistant():
         f"Current findings: {json.dumps(findings)}\nUser question: {question.strip()}"
     )
     body = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode()
-    endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + parse.quote(api_key, safe="")
+    # The ``-latest`` alias keeps the demo on the currently enabled Flash text
+    # model for this API key. A deployment may override it without code changes.
+    model = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
+    endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{parse.quote(model, safe='-._')}:generateContent?key=" + parse.quote(api_key, safe="")
     try:
         response = urlrequest.urlopen(urlrequest.Request(endpoint, data=body, headers={"Content-Type": "application/json"}), timeout=20)
         data = json.load(response)
