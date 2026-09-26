@@ -1,0 +1,86 @@
+/*
+  Dashboard styles, served by Flask at /static/style.css.
+
+  Status classes come straight from the check result dicts:
+    .status-ok      -> green (closed port, nothing found)
+    .status-warning -> red   (open risky port, IOC found)
+    .status-error   -> gray  (the check itself crashed)
+*/
+
+:root {
+  --bg: #f5f6f8;
+  --panel: #ffffff;
+  --text: #1c1f24;
+  --muted: #5d6470;
+  --border: #dde1e6;
+  --ok: #1f9d55;
+  --warning: #d64545;
+  --error: #8a8f98;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161a;
+    --panel: #1d2026;
+    --text: #e6e8eb;
+    --muted: #9aa1ab;
+    --border: #2d323a;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 24px 16px;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+header, main { max-width: 960px; margin: 0 auto; }
+header h1 { margin: 0 0 4px; font-size: 1.6rem; }
+header p { margin: 0 0 24px; color: var(--muted); }
+a { color: inherit; }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left-width: 6px;
+  border-radius: 8px;
+  padding: 16px 20px;
+  margin-bottom: 20px;
+}
+.panel h2 { margin: 0; font-size: 1.15rem; }
+.description { margin: 2px 0 8px; color: var(--muted); }
+.summary { margin: 0 0 12px; font-weight: 600; }
+
+.items { list-style: none; margin: 0; padding: 0; }
+.item {
+  display: grid;
+  grid-template-columns: 14px minmax(140px, 220px) 1fr;
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+}
+.label { font-weight: 500; }
+.detail { color: var(--muted); }
+
+.dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--dot);
+}
+
+.status-ok      { --dot: var(--ok);      border-left-color: var(--ok); }
+.status-warning { --dot: var(--warning); border-left-color: var(--warning); }
+.status-error   { --dot: var(--error);   border-left-color: var(--error); }
+
+@media (max-width: 560px) {
+  .item { grid-template-columns: 14px 1fr; }
+  .detail { grid-column: 2; }
+}

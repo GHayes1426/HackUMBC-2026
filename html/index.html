@@ -1,0 +1,47 @@
+<!doctype html>
+<!--
+  Dashboard page (Jinja template rendered by app.py's "/" route).
+
+  Receives `results`: the list from checks.base.run_all(). Each entry is
+  {name, description, status, summary, items}. The page loops over it, so
+  new checks show up without editing this file.
+
+  Note: use check["items"], not check.items. On a dict, Jinja resolves
+  .items to the dict's built-in items() method.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Network Security Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header>
+    <h1>Network Security Dashboard</h1>
+    <p>Assessing <code>127.0.0.1</code> &middot; <a href="{{ url_for('dashboard') }}">Rescan</a></p>
+  </header>
+
+  <main>
+    {% for check in results %}
+    <section class="panel status-{{ check.status }}">
+      <h2>{{ check.name }}</h2>
+      <p class="description">{{ check.description }}</p>
+      <p class="summary"><span class="dot"></span>{{ check.summary }}</p>
+
+      <ul class="items">
+        {% for item in check["items"] %}
+        <li class="item status-{{ item.status }}">
+          <span class="dot"></span>
+          <span class="label">{{ item.label }}</span>
+          <span class="detail">{{ item.detail }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% else %}
+    <p>No checks registered. Import one in <code>checks/__init__.py</code>.</p>
+    {% endfor %}
+  </main>
+</body>
+</html>
