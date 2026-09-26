@@ -10,6 +10,14 @@
 
 const ICONS = { success: "✓", info: "…", warning: "!", error: "×" };
 let activeAssistantAudio;
+let assistantSpeechGenerating = false;
+
+function setReadAloudButtonsDisabled(disabled, label = "Read aloud with ElevenLabs") {
+  document.querySelectorAll(".assistant-read-answer").forEach((button) => {
+    button.disabled = disabled;
+    button.textContent = disabled ? label : "Read aloud with ElevenLabs";
+  });
+}
 
 function stopAssistantVoice() {
   if (activeAssistantAudio) {
@@ -18,6 +26,8 @@ function stopAssistantVoice() {
     activeAssistantAudio = undefined;
   }
   if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+  assistantSpeechGenerating = false;
+  setReadAloudButtonsDisabled(false);
   const stop = document.getElementById("assistant-stop-voice");
   if (stop) stop.disabled = true;
 }
@@ -213,8 +223,13 @@ function addAssistantMessage(text, role = "assistant") {
 
 async function speakAssistantAnswer(text) {
   if (!window.portAPottyVoiceEnabled) return;
+  if (assistantSpeechGenerating || activeAssistantAudio) {
+    toast("A response is already being read aloud.", "info");
+    return;
+  }
   window.portAPottySetVoiceState?.("responding", "Responding with ElevenLabs…");
-  stopAssistantVoice();
+  assistantSpeechGenerating = true;
+  setReadAloudButtonsDisabled(true);
   try {
     const response = await fetch("/api/assistant/speak", {
       method: "POST",
@@ -223,6 +238,7 @@ async function speakAssistantAnswer(text) {
     });
     if (!response.ok) throw new Error("ElevenLabs voice unavailable");
     activeAssistantAudio = new Audio(URL.createObjectURL(await response.blob()));
+    setReadAloudButtonsDisabled(true, "Voice is playing…");
     const stop = document.getElementById("assistant-stop-voice");
     if (stop) stop.disabled = false;
     activeAssistantAudio.addEventListener("ended", stopAssistantVoice, { once: true });
