@@ -177,6 +177,7 @@ function addAssistantMessage(text, role = "assistant") {
   message.textContent = text;
   messages.append(message);
   messages.scrollTop = messages.scrollHeight;
+  return message;
 }
 
 async function speakAssistantAnswer(text) {
@@ -207,6 +208,7 @@ async function askAssistant(form) {
   if (!question) return;
   const submit = form.querySelector("button[type=submit]");
   addAssistantMessage(question, "user");
+  const pending = addAssistantMessage("Port a Potty is analyzing the findings…", "assistant pending");
   input.value = "";
   submit.disabled = true;
   try {
@@ -217,9 +219,11 @@ async function askAssistant(form) {
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || "The assistant could not respond.");
+    pending.remove();
     addAssistantMessage(data.answer, "assistant");
     speakAssistantAnswer(data.answer);
   } catch (err) {
+    pending.remove();
     addAssistantMessage(err.message, "assistant error");
   } finally {
     submit.disabled = false;
