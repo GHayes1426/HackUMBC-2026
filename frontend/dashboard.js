@@ -211,6 +211,7 @@ async function speakAssistantAnswer(text) {
     if (stop) stop.disabled = false;
     activeAssistantAudio.addEventListener("ended", stopAssistantVoice, { once: true });
     await activeAssistantAudio.play();
+    await new Promise((resolve) => activeAssistantAudio.addEventListener("ended", resolve, { once: true }));
   } catch {
     stopAssistantVoice();
     toast("ElevenLabs voice is unavailable. The response is available as text.", "error");
@@ -236,7 +237,8 @@ async function askAssistant(form) {
     if (!response.ok) throw new Error(data.error || "The assistant could not respond.");
     pending.remove();
     addAssistantMessage(data.answer, "assistant");
-    speakAssistantAnswer(data.answer);
+    await speakAssistantAnswer(data.answer);
+    window.portAPottyResumeSpeechMode?.();
   } catch (err) {
     pending.remove();
     addAssistantMessage(err.message, "assistant error");
@@ -248,131 +250,98 @@ async function askAssistant(form) {
 
 function setupVoiceInput() {
   const button = document.getElementById("assistant-talk");
+  const textMode = document.getElementById("assistant-text-mode");
   const input = document.getElementById("assistant-input");
   const form = document.getElementById("assistant-form");
   const voiceStatus = document.getElementById("assistant-voice-status");
-  if (!button || !input) return;
-  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  let recognition;
-  let listening = false;
-  let recorder;
-  let stream;
   const canRecord = Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
+  let stream, recorder, monitor, audioContext, speechMode = false;
   window.portAPottyVoiceEnabled = false;
-  if (!Recognition && !(navigator.mediaDevices?.getUserMedia && window.MediaRecorder)) {
+  if (!button || !input || !canRecord) {
     button.textContent = "Voice unavailable";
     button.disabled = true;
-    button.title = "Use a current Chrome or Edge browser and allow microphone access.";
     return;
   }
-  function resetButton() {
-    listening = false;
-    button.textContent = "Talk to assistant";
-    button.setAttribute("aria-pressed", "false");
+  const setStatus = (message) => { if (voiceStatus) voiceStatus.textContent = message; };
+  const setModeControls = (active) => {
+    button.hidden = active;
+    textMode.hidden = !active;
+    textMode.disabled = !active;
+  };
+  function stopMonitor() {
+    clearInterval(monitor);
+    audioContext?.close();
+    audioContext = undefined;
   }
-  function setVoiceStatus(message, state = "ready") {
-    if (!voiceStatus) return;
-    voiceStatus.textContent = message;
-    voiceStatus.dataset.state = state;
+  async function transcribeTurn(chunks, mimeType) {
+    setStatus("Transcribing with ElevenLabs…");
+    const data = new FormData();
+    data.append("audio", new Blob(chunks, { type: mimeType || "audio/webm" }), "speech-mode.webm");
+    const response = await fetch("/api/assistant/transcribe", { method: "POST", body: data });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || "ElevenLabs could not transcribe that turn.");
+    input.value = result.text;
+    setStatus("Sending your question to Port a Potty…");
+    form.requestSubmit();
   }
-  if (Recognition) {
-    recognition = new Recognition();
-    recognition.lang = "en-US";
-    recognition.interimResults = false;
-    recognition.continuous = false;
-    recognition.onresult = (event) => {
-      input.value = event.results[0][0].transcript;
-      input.focus();
-      form.requestSubmit();
+  function listenForTurn() {
+    if (!speechMode || !stream || recorder?.state === "recording") return;
+    const chunks = [];
+    let heardSpeech = false;
+    let quietSince = 0;
+    recorder = new MediaRecorder(stream);
+    recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
+    recorder.onstop = async () => {
+      stopMonitor();
+      if (!speechMode || !chunks.length) return;
+      try { await transcribeTurn(chunks, recorder.mimeType); }
+      catch (err) { toast(err.message, "error"); if (speechMode) listenForTurn(); }
     };
-    recognition.onerror = () => toast("Microphone input was unavailable. Check browser microphone permission.", "error");
-    recognition.onend = resetButton;
+    audioContext = new AudioContext();
+    audioContext.resume();
+    const analyser = audioContext.createAnalyser();
+    audioContext.createMediaStreamSource(stream).connect(analyser);
+    const samples = new Uint8Array(analyser.fftSize);
+    recorder.start();
+    setStatus("Speech mode is on — speak naturally. I will respond after you pause.");
+    monitor = setInterval(() => {
+      analyser.getByteTimeDomainData(samples);
+      const volume = samples.reduce((sum, value) => sum + Math.abs(value - 128), 0) / samples.length / 128;
+      if (volume > 0.018) { heardSpeech = true; quietSince = 0; }
+      else if (heardSpeech) {
+        quietSince ||= Date.now();
+        if (Date.now() - quietSince > 900 && recorder?.state === "recording") recorder.stop();
+      }
+    }, 100);
   }
-  function startBrowserFallback() {
-    if (!recognition) {
-      toast("Voice recording is not supported by this browser.", "error");
-      return;
-    }
-    toast("ElevenLabs is unavailable, so the browser voice fallback is listening.", "info");
-    setVoiceStatus("Using browser voice fallback.", "fallback");
-    listening = true;
-    button.textContent = "Listening…";
-    button.setAttribute("aria-pressed", "true");
-    recognition.start();
-  }
-  async function startElevenLabsRecording() {
+  async function startSpeechMode() {
     try {
-      setVoiceStatus("Requesting microphone permission…", "requesting");
+      setStatus("Requesting microphone permission…");
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      setVoiceStatus("Microphone enabled — recording for ElevenLabs.", "active");
-      const chunks = [];
-      recorder = new MediaRecorder(stream);
-      recorder.ondataavailable = (event) => chunks.push(event.data);
-      recorder.onstop = async () => {
-        stream.getTracks().forEach((track) => track.stop());
-        resetButton();
-        button.textContent = "Transcribing…";
-        button.disabled = true;
-        setVoiceStatus("Sending your recording to ElevenLabs…", "processing");
-        let browserFallbackActive = false;
-        try {
-          const data = new FormData();
-          data.append("audio", new Blob(chunks, { type: recorder.mimeType || "audio/webm" }), "question.webm");
-          const response = await fetch("/api/assistant/transcribe", { method: "POST", body: data });
-          const result = await response.json().catch(() => ({}));
-          if (!response.ok) throw new Error(result.error || "Could not transcribe the recording.");
-          input.value = result.text;
-          setVoiceStatus("ElevenLabs transcript ready — asking Port a Potty…", "processing");
-          form.requestSubmit();
-        } catch (err) {
-          if (recognition) {
-            browserFallbackActive = true;
-            startBrowserFallback();
-          } else {
-            toast(err.message, "error");
-          }
-        } finally {
-          button.disabled = false;
-          if (!browserFallbackActive) {
-            resetButton();
-            setVoiceStatus("Click Talk to assistant to record another question.", "ready");
-          }
-        }
-      };
-      recorder.start();
-      listening = true;
-      button.textContent = "Recording… click to stop";
-      button.setAttribute("aria-pressed", "true");
+      speechMode = true;
+      window.portAPottyVoiceEnabled = true;
+      setModeControls(true);
+      listenForTurn();
     } catch (err) {
       const reason = err?.name || "UnknownError";
-      const denied = reason === "NotAllowedError" || reason === "SecurityError";
-      const missing = reason === "NotFoundError";
-      const message = denied
-        ? "Microphone is blocked by Edge or Windows. Enable it in browser and Windows microphone permissions."
-        : missing
-          ? "No microphone device was detected. Connect or select a microphone in Windows, then retry."
-          : `Microphone request failed (${reason}). Check that Edge has microphone access.`;
-      setVoiceStatus(message, "blocked");
-      toast(message, "error");
-      resetButton();
+      setStatus(`Microphone request failed (${reason}). Check Edge and Windows microphone permissions.`);
+      toast("Microphone access is required for speech mode.", "error");
     }
   }
-  button.addEventListener("click", () => {
-    window.portAPottyVoiceEnabled = true;
-    if (recorder?.state === "recording") {
-      recorder.stop();
-      return;
-    }
-    if (canRecord) {
-      startElevenLabsRecording();
-      return;
-    }
-    if (listening && recognition) {
-      recognition.stop();
-      return;
-    }
-    startBrowserFallback();
-  });
+  function stopSpeechMode() {
+    speechMode = false;
+    stopMonitor();
+    if (recorder?.state === "recording") recorder.stop();
+    stream?.getTracks().forEach((track) => track.stop());
+    stream = undefined;
+    window.portAPottyVoiceEnabled = false;
+    stopAssistantVoice();
+    setModeControls(false);
+    setStatus("Text mode is on. Type a question below.");
+  }
+  window.portAPottyResumeSpeechMode = () => { if (speechMode) listenForTurn(); };
+  button.addEventListener("click", startSpeechMode);
+  textMode.addEventListener("click", stopSpeechMode);
 }
 
 function setupAssistantResize() {
