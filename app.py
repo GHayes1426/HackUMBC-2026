@@ -16,6 +16,7 @@ Folders: templates live in html/ and static files in frontend/
 from dataclasses import asdict
 import json
 import os
+import re
 from pathlib import Path
 from urllib import parse, request as urlrequest
 from urllib.error import HTTPError
@@ -108,6 +109,8 @@ def assistant():
     prompt = (
         "You are Port a Potty, a defensive cybersecurity demo assistant. Explain findings plainly, "
         "avoid claiming certainty, and give safe remediation steps. Do not provide offensive instructions.\n"
+        "Use plain text only: no Markdown headings, asterisks, backticks, or hash symbols. "
+        "Use short paragraphs and simple numbered steps when useful.\n"
         f"Current findings: {json.dumps(findings)}\nUser question: {question.strip()}"
     )
     body = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode()
@@ -123,6 +126,11 @@ def assistant():
                 with urlrequest.urlopen(urlrequest.Request(endpoint, data=body, headers={"Content-Type": "application/json"}), timeout=20) as response:
                     data = json.load(response)
                     answer = data["candidates"][0]["content"]["parts"][0]["text"]
+                    # Keep the browser's text-only message display clean even if
+                    # a model returns a few Markdown markers despite the prompt.
+                    answer = re.sub(r"(?m)^#{1,6}\s*", "", answer)
+                    answer = re.sub(r"\*{1,3}([^*]+)\*{1,3}", r"\1", answer)
+                    answer = re.sub(r"(?m)^\s*[-*]\s+", "• ", answer)
                     break
             except HTTPError as exc:
                 provider_detail = exc.read().decode("utf-8", errors="replace")[:500]
