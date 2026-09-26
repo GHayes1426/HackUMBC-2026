@@ -42,6 +42,24 @@ with Ctrl+C.
 | Hardening | Firewall, stealth mode, FileVault, Gatekeeper, SIP | Defender Firewall, Defender antivirus, BitLocker, UAC | ufw, SSH root/password login, auto-updates |
 | Close / Reopen port | pf (password prompt) | Defender Firewall rule (UAC prompt) | iptables (needs sudo) |
 
+## Reading the dashboard
+
+Every item has a colored tag, and a key at the top of the page explains them:
+
+| Tag | Color | Meaning |
+|---|---|---|
+| **RISK** | red | Dangerous: an open risky port no known app explains, an attack sign, or a protection that's off. Fix first. |
+| **REVIEW** | amber | Probably needed but worth a look: a risky port a recognized app uses, or an unrecognized program other devices can reach. |
+| **IN USE** | blue | A recognized app or OS feature needs this port (AirPlay, VS Code, Windows services...). Normal. |
+| **SAFE** | green | Closed, only reachable from this computer, or a protection that's on. |
+| **UNKNOWN** | gray | Couldn't be checked, usually because it needs admin rights. |
+
+Programs and ports are recognized using `checks/port_catalog.py`, which
+also supplies the plain-English description of what each one does. To
+teach the dashboard a new app, add one line to `PROGRAMS` there.
+Checks report these as the item statuses `warning`, `review`, `info`,
+`ok` and `error` (see `checks/base.py`).
+
 ## What's in it right now
 
 - **Local Port Assessor** (`checks/port_scan.py`): scans localhost

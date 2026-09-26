@@ -9,10 +9,18 @@ app.py or the HTML template.
 
 Result contract returned by Check.run():
     {
-        "status":  "ok" | "warning" | "error",
+        "status":  <status>,           # overall: the worst item status
         "summary": "Short headline",
-        "items":   [{"label": str, "status": str, "detail": str}, ...],
+        "items":   [{"label": str, "status": <status>, "detail": str}, ...],
+        "note":    "optional small print under the summary",
     }
+
+Statuses (color and tag on the page, see checks/summary.py STATUSES):
+    "warning" red    RISK     -- dangerous: fix it
+    "review"  amber  REVIEW   -- probably needed or unrecognized: take a look
+    "info"    blue   IN USE   -- a recognized app/OS feature needs it: normal
+    "ok"      green  SAFE     -- closed, local-only, or protection on
+    "error"   gray   UNKNOWN  -- couldn't be checked
 """
 
 REGISTRY = []

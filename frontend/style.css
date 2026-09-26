@@ -1,10 +1,14 @@
 /*
   Dashboard styles, served by Flask at /static/style.css.
 
-  Status classes come straight from the check result dicts:
-    .status-ok      -> green (closed port, nothing found)
-    .status-warning -> red   (open risky port, IOC found)
-    .status-error   -> gray  (the check itself crashed)
+  Status classes come straight from the check result dicts (see checks/base.py):
+    .status-warning -> red    RISK     dangerous: fix it
+    .status-review  -> amber  REVIEW   probably needed or unrecognized
+    .status-info    -> blue   IN USE   a recognized app/OS feature needs it
+    .status-ok      -> green  SAFE     closed, local-only, protection on
+    .status-error   -> gray   UNKNOWN  couldn't be checked
+  Each status sets --dot, which tags, tiles, panels and bars read.
+  Colors are checked for color-blind separation; every use also has a text tag.
 */
 
 :root {
@@ -13,10 +17,13 @@
   --text: #1c1f24;
   --muted: #5d6470;
   --border: #dde1e6;
-  --ok: #1f9d55;
-  --warning: #d64545;
-  --error: #8a8f98;
-  --series: #2a78d6;    /* neutral bar color */
+  --warning: #d03b3b;   /* RISK */
+  --review: #d99a00;    /* REVIEW */
+  --info: #2a78d6;      /* IN USE */
+  --ok: #1f9d55;        /* SAFE */
+  --error: #8a8f98;     /* UNKNOWN */
+  --neutral: #8a8f98;   /* un-flagged chart bars */
+  --series: var(--info);
   --track: #eceef1;     /* bar background */
 }
 
@@ -27,7 +34,11 @@
     --text: #e6e8eb;
     --muted: #9aa1ab;
     --border: #2d323a;
-    --series: #3987e5;
+    --warning: #e05252;
+    --info: #3987e5;
+    --ok: #1fb04a;
+    --error: #7d838d;
+    --neutral: #7d838d;
     --track: #262a31;
   }
 }
@@ -62,27 +73,61 @@ a { color: inherit; }
 .items { list-style: none; margin: 0; padding: 0; }
 .item {
   display: grid;
-  grid-template-columns: 14px minmax(140px, 220px) 1fr auto;
-  gap: 10px;
+  grid-template-columns: 108px minmax(150px, 250px) 1fr auto;
+  gap: 12px;
   align-items: baseline;
-  padding: 6px 0;
+  padding: 8px 0;
   border-top: 1px solid var(--border);
 }
 .label { font-weight: 500; }
 .detail { color: var(--muted); }
 
-.dot {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  margin-right: 6px;
+
+.status-warning { --dot: var(--warning); }
+.status-review  { --dot: var(--review); }
+.status-info    { --dot: var(--info); }
+.status-ok      { --dot: var(--ok); }
+.status-error   { --dot: var(--error); }
+.panel { border-left-color: var(--dot); }
+
+/* Status tag: colored icon + label text (meaning never relies on color alone). */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
+  padding: 2px 8px 2px 3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dot) 14%, transparent);
+  color: var(--text);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.tag-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   background: var(--dot);
+  color: #fff;
+  font-size: 0.7rem;
+  text-transform: none;
 }
 
-.status-ok      { --dot: var(--ok);      border-left-color: var(--ok); }
-.status-warning { --dot: var(--warning); border-left-color: var(--warning); }
-.status-error   { --dot: var(--error);   border-left-color: var(--error); }
+.panel-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.note { margin: -6px 0 12px; color: var(--muted); font-size: 0.85rem; }
+
+/* Color key */
+.key { margin: 0 0 20px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 6px; }
+.key h3 { margin: 0 0 8px; font-size: 0.95rem; }
+.key-list { display: grid; gap: 6px; margin: 0; }
+.key-row { display: grid; grid-template-columns: 108px 1fr; gap: 10px; align-items: baseline; }
+.key-row dt, .key-row dd { margin: 0; }
+.key-row dd { color: var(--muted); font-size: 0.9rem; }
 
 /* ---- Threat summary ---- */
 
@@ -118,17 +163,6 @@ a { color: inherit; }
 .tile-name { color: var(--muted); font-size: 0.9rem; }
 .tile-value { font-size: 1.8rem; font-weight: 700; }
 .tile-status { display: flex; align-items: center; gap: 6px; font-size: 0.9rem; }
-.badge {
-  display: inline-grid;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--dot);
-  color: #fff;
-  font-size: 0.75rem;
-  font-weight: 700;
-}
 
 .charts {
   display: grid;
@@ -159,7 +193,12 @@ a { color: inherit; }
   background: var(--series);
   border-radius: 0 4px 4px 0; /* rounded data end, square at the baseline */
 }
-.bar-row.flagged .bar { background: var(--warning); }
+.bar-row.tone-warning .bar { background: var(--warning); }
+.bar-row.tone-review  .bar { background: var(--review); }
+.bar-row.tone-info    .bar { background: var(--info); }
+.bar-row.tone-ok      .bar { background: var(--ok); }
+.bar-row.tone-error   .bar,
+.bar-row.tone-neutral .bar { background: var(--neutral); }
 .bar-value { font-size: 0.9rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .flag { color: var(--muted); font-size: 0.8rem; }
 
@@ -234,8 +273,9 @@ main.refreshing { opacity: 0.55; transition: opacity 0.15s; pointer-events: none
 .port-action:disabled { opacity: 0.6; cursor: progress; }
 
 @media (max-width: 560px) {
-  .item { grid-template-columns: 14px 1fr; }
-  .detail, .port-action { grid-column: 2; justify-self: start; }
+  .item { grid-template-columns: 1fr; gap: 4px; }
+  .key-row { grid-template-columns: 1fr; gap: 2px; }
+  .port-action { justify-self: start; }
   .hero-value { font-size: 2.8rem; }
   .overview, .panel { padding: 14px; }
   .bar-row { grid-template-columns: 1fr; gap: 2px; }

@@ -1,14 +1,21 @@
 """
 Local Port Assessor check.
 
-Scans localhost for a set of commonly risky ports and flags any
-that are open, with a plain-text recommendation for each.
+Scans localhost for a set of commonly risky ports and explains each:
+what the port is for, which program has it open, why it's risky, and
+what to do. Statuses:
+    warning (red, RISK)     -- open, and no recognized program explains it
+    review  (amber, REVIEW) -- open because a recognized app/OS feature uses it:
+                               probably needed, but still a common attack target
+    ok      (green, SAFE)   -- closed, or closed by this dashboard
 """
 
 import socket
 from concurrent.futures import ThreadPoolExecutor
 
 from checks.base import Check, register
+from checks.listeners import programs_on_port
+from checks.port_catalog import describe, port_info
 from checks.port_control import closed_ports
 
 # port -> (service name, why it's risky, recommendation)
@@ -60,34 +67,50 @@ class PortScanCheck(Check):
         open_ports = get_open_ports(RISKY_PORTS, host)
 
         for port, (service, risk, recommendation) in RISKY_PORTS.items():
+            label = f"Port {port} · {service}"
+            what = port_info(port)[1] if port_info(port) else ""
             if port in closed_here:
                 # Checked first: on Windows a blocked port still answers local scans.
                 items.append({
-                    "label": f"Port {port} ({service})",
+                    "label": label,
                     "status": "ok",
-                    "detail": "Closed by this dashboard (firewall rule). Reopen it if a program needs it.",
+                    "detail": f"{what} Closed by this dashboard (firewall rule). Reopen it if a program needs it.",
                     "action": {"kind": "reopen", "port": port},
                 })
             elif port in open_ports:
                 open_count += 1
+                programs = programs_on_port(port)
+                known = [describe(program, port) for program in programs]
+                known = [info for info in known if info["known"]]
+                if known:
+                    used_by = f"In use by {known[0]['name']} ({', '.join(programs)}), so something on this computer probably needs it."
+                    status = "review"
+                elif programs:
+                    used_by = f"Open, used by unrecognized program(s): {', '.join(programs)}."
+                    status = "warning"
+                else:
+                    used_by = "Open, but the program using it isn't visible without admin rights."
+                    status = "warning"
                 items.append({
-                    "label": f"Port {port} ({service})",
-                    "status": "warning",
-                    "detail": f"OPEN — {risk}. {recommendation}.",
+                    "label": label,
+                    "status": status,
+                    "detail": f"{what} {used_by} Why it's risky: {risk.lower()}. What to do: {recommendation}.",
                     "action": {"kind": "close", "port": port},
                 })
             else:
                 items.append({
-                    "label": f"Port {port} ({service})",
+                    "label": label,
                     "status": "ok",
-                    "detail": "Closed",
+                    "detail": f"Closed. {what}",
                 })
 
+        risks = sum(1 for item in items if item["status"] == "warning")
         if open_count == 0:
-            status = "ok"
-            summary = "No risky ports open"
+            status, summary = "ok", f"None of the {len(RISKY_PORTS)} commonly attacked ports are open"
         else:
-            status = "warning"
+            status = "warning" if risks else "review"
             summary = f"{open_count} risky port(s) open"
+            if open_count - risks:
+                summary += f", {open_count - risks} used by recognized apps"
 
         return {"status": status, "summary": summary, "items": items}

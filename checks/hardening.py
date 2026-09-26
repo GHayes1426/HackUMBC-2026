@@ -18,6 +18,23 @@ from checks.system import OS, powershell_json, run
 
 UNREADABLE = ("error", "Couldn't be read on this system")
 
+# What each protection does, in plain words; shown in front of its on/off state.
+PURPOSE = {
+    "Firewall": "Blocks other devices from connecting to apps you haven't allowed.",
+    "Firewall stealth mode": "Makes the Mac ignore network probes (like ping), so scanners can't easily tell it's there.",
+    "FileVault disk encryption": "Encrypts the whole disk, so a lost or stolen Mac's files can't be read without your password.",
+    "Gatekeeper": "Only lets apps run if they come from the App Store or identified developers.",
+    "System Integrity Protection": "Stops any program, even with admin rights, from modifying core macOS files.",
+    "Windows Defender Firewall": "Blocks other devices from connecting to apps you haven't allowed.",
+    "Microsoft Defender Antivirus": "Scans files and programs for malware as they're opened.",
+    "BitLocker disk encryption": "Encrypts the system drive, so a lost or stolen PC's files can't be read.",
+    "User Account Control (UAC)": "Asks before any program makes system-wide changes, so malware can't silently take admin rights.",
+    "Firewall (ufw)": "Blocks other devices from connecting to services you haven't allowed.",
+    "SSH root login": "Controls whether the all-powerful root account can log in remotely.",
+    "SSH password login": "Controls whether remote logins can use passwords, which attackers can guess.",
+    "Automatic security updates": "Installs security fixes automatically, closing known holes quickly.",
+}
+
 
 def _text_probe(command, on_text, fix):
     """Probe that runs a command and looks for on_text in its output."""
@@ -40,7 +57,7 @@ MACOS_PROBES = [
     ("Firewall", _text_probe([SOCKETFILTERFW, "--getglobalstate"], "enabled",
                              "Turn on in System Settings > Network > Firewall")),
     ("Firewall stealth mode", _text_probe([SOCKETFILTERFW, "--getstealthmode"], "stealth mode is on",
-                                          "Turn on in Firewall > Options so the Mac ignores probes like ping")),
+                                          "Turn on in System Settings > Network > Firewall > Options")),
     ("FileVault disk encryption", _text_probe(["fdesetup", "status"], "filevault is on",
                                               "Turn on in System Settings > Privacy & Security > FileVault")),
     ("Gatekeeper", _text_probe(["spctl", "--status"], "assessments enabled",
@@ -195,7 +212,13 @@ class HardeningCheck(Check):
         items = []
         for label, probe in probes:
             status, detail = probe()
-            items.append({"label": label, "status": status, "detail": detail})
+            purpose = PURPOSE.get(label, "")
+            # State first, then what the protection does, then how to fix it.
+            if detail.startswith("OFF. "):
+                detail = f"OFF. {purpose} To fix: {detail[5:]}"
+            else:
+                detail = f"{detail.rstrip('.')}. {purpose}"
+            items.append({"label": label, "status": status, "detail": detail.strip()})
 
         off_count = sum(1 for item in items if item["status"] == "warning")
         if off_count:

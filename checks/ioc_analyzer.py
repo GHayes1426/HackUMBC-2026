@@ -36,10 +36,23 @@ class IOCAnalyzerCheck(Check):
                 "label": f"Brute-force source {finding['ip']}",
                 "status": "warning",
                 "detail": (
-                    f"{finding['count']} failed SSH logins "
-                    f"(users tried: {', '.join(finding['users'])})"
+                    f"{finding['count']} failed SSH logins, trying username(s): {', '.join(finding['users'])}. "
+                    f"{BRUTE_FORCE_THRESHOLD}+ failures from one address is a sign of password guessing. "
+                    "If this is a real log: block this IP in your firewall, and switch SSH to key-only logins."
                 ),
             })
+        flagged_ips = {finding["ip"] for finding in brute_force}
+        for ip, count in count_failures_by_ip(events).most_common():
+            if ip not in flagged_ips:
+                items.append({
+                    "label": f"Failed logins from {ip}",
+                    "status": "ok",
+                    "detail": (f"{count} failed SSH login(s), below the {BRUTE_FORCE_THRESHOLD}-failure threshold. "
+                               "Usually a mistyped password, not an attack."),
+                })
+        if not events:
+            items.append({"label": "SSH login failures", "status": "ok",
+                          "detail": "No failed SSH logins in the log."})
 
         # Rule 2: CVE-mapped open ports
         # Ports this dashboard closed are firewalled even if a local scan still connects (Windows).
@@ -48,16 +61,17 @@ class IOCAnalyzerCheck(Check):
             items.append({
                 "label": f"Port {finding['port']}: {finding['cve']}",
                 "status": "warning",
-                "detail": f"{finding['description']} (open port only; version not verified)",
+                "detail": (f"{finding['description']}. This port is open, and it's the port that "
+                           f"vulnerability attacks. An open port doesn't prove the vulnerable version is "
+                           f"installed, so check the program's version and update it."),
             })
-
-        # Always say where the log data came from, so sample data is never
-        # mistaken for a real attack on this machine.
-        items.append({
-            "label": "Log source",
-            "status": "ok",
-            "detail": f"SAMPLE DATA: {source}" if is_sample else source,
-        })
+        if not cve_hits:
+            watched = ", ".join(str(port) for port in sorted(CVE_PORT_MAP))
+            items.append({
+                "label": "Known-vulnerability ports",
+                "status": "ok",
+                "detail": f"None of the ports tied to well-known attacks ({watched}) are open.",
+            })
 
         issue_count = len(brute_force) + len(cve_hits)
         if issue_count == 0:
@@ -77,4 +91,9 @@ class IOCAnalyzerCheck(Check):
             ],
         }
 
-        return {"status": status, "summary": summary, "items": items, "chart": chart}
+        # Always say where the log data came from, so sample data is never
+        # mistaken for a real attack on this machine.
+        note = (f"Log source: SAMPLE DATA ({source}). No readable system SSH log was found, so a bundled "
+                "example log is used." if is_sample else f"Log source: {source}")
+
+        return {"status": status, "summary": summary, "items": items, "chart": chart, "note": note}
