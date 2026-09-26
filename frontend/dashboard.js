@@ -235,6 +235,7 @@ function setupVoiceInput() {
   const button = document.getElementById("assistant-talk");
   const input = document.getElementById("assistant-input");
   const form = document.getElementById("assistant-form");
+  const voiceStatus = document.getElementById("assistant-voice-status");
   if (!button || !input) return;
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   let recognition;
@@ -253,6 +254,11 @@ function setupVoiceInput() {
     listening = false;
     button.textContent = "Talk to assistant";
     button.setAttribute("aria-pressed", "false");
+  }
+  function setVoiceStatus(message, state = "ready") {
+    if (!voiceStatus) return;
+    voiceStatus.textContent = message;
+    voiceStatus.dataset.state = state;
   }
   if (Recognition) {
     recognition = new Recognition();
@@ -273,6 +279,7 @@ function setupVoiceInput() {
       return;
     }
     toast("ElevenLabs is unavailable, so the browser voice fallback is listening.", "info");
+    setVoiceStatus("Using browser voice fallback.", "fallback");
     listening = true;
     button.textContent = "Listening…";
     button.setAttribute("aria-pressed", "true");
@@ -280,7 +287,9 @@ function setupVoiceInput() {
   }
   async function startElevenLabsRecording() {
     try {
+      setVoiceStatus("Requesting microphone permission…", "requesting");
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      setVoiceStatus("Microphone enabled — recording for ElevenLabs.", "active");
       const chunks = [];
       recorder = new MediaRecorder(stream);
       recorder.ondataavailable = (event) => chunks.push(event.data);
@@ -289,6 +298,7 @@ function setupVoiceInput() {
         resetButton();
         button.textContent = "Transcribing…";
         button.disabled = true;
+        setVoiceStatus("Sending your recording to ElevenLabs…", "processing");
         let browserFallbackActive = false;
         try {
           const data = new FormData();
@@ -297,6 +307,7 @@ function setupVoiceInput() {
           const result = await response.json().catch(() => ({}));
           if (!response.ok) throw new Error(result.error || "Could not transcribe the recording.");
           input.value = result.text;
+          setVoiceStatus("ElevenLabs transcript ready — asking Port a Potty…", "processing");
           form.requestSubmit();
         } catch (err) {
           if (recognition) {
@@ -307,14 +318,19 @@ function setupVoiceInput() {
           }
         } finally {
           button.disabled = false;
-          if (!browserFallbackActive) resetButton();
+          if (!browserFallbackActive) {
+            resetButton();
+            setVoiceStatus("Click Talk to assistant to record another question.", "ready");
+          }
         }
       };
       recorder.start();
       listening = true;
       button.textContent = "Recording… click to stop";
       button.setAttribute("aria-pressed", "true");
-    } catch {
+    } catch (err) {
+      const denied = err?.name === "NotAllowedError" || err?.name === "SecurityError";
+      setVoiceStatus(denied ? "Microphone blocked. Allow it in this site’s browser permissions, then retry." : "Microphone is unavailable in this browser.", "blocked");
       toast("Microphone permission was denied or unavailable. Allow microphone access in this browser, then try again.", "error");
       resetButton();
     }

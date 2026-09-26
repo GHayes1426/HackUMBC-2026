@@ -305,6 +305,7 @@ main.refreshing { opacity: 0.55; transition: opacity 0.15s; pointer-events: none
 .assistant-resize-handle { position: absolute; top: -1px; left: -1px; width: 22px; height: 22px; padding: 0; border: 0; border-top-left-radius: 11px; background: linear-gradient(135deg, var(--series) 0 35%, transparent 36%); cursor: nwse-resize; touch-action: none; }
 .assistant-heading strong { font-size: .92rem; }
 .assistant-heading span { color: var(--muted); font-size: .78rem; }
+.assistant-heading .assistant-voice-status { color: var(--series); }
 .assistant-messages { min-height: 150px; max-height: 420px; overflow-y: auto; display: grid; gap: 7px; margin-bottom: 9px; }
 .assistant-message { margin: 0; padding: 7px 9px; border-radius: 8px; background: var(--track); font-size: .86rem; white-space: pre-wrap; }
 .assistant-message.user { justify-self: end; background: color-mix(in srgb, var(--series) 16%, var(--panel)); }
