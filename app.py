@@ -18,6 +18,7 @@ import json
 import os
 from pathlib import Path
 from urllib import parse, request as urlrequest
+from urllib.error import HTTPError
 from uuid import uuid4
 
 from flask import Flask, Response, abort, jsonify, render_template, request
@@ -111,13 +112,23 @@ def assistant():
     )
     body = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode()
     # The ``-latest`` alias keeps the demo on the currently enabled Flash text
-    # model for this API key. A deployment may override it without code changes.
-    model = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
-    endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{parse.quote(model, safe='-._')}:generateContent?key=" + parse.quote(api_key, safe="")
+    # model for this API key. Flash Lite is a lower-latency fallback when the
+    # primary provider endpoint is temporarily overloaded.
+    models = [os.environ.get("GEMINI_MODEL", "gemini-flash-latest"), "gemini-2.5-flash-lite"]
     try:
-        response = urlrequest.urlopen(urlrequest.Request(endpoint, data=body, headers={"Content-Type": "application/json"}), timeout=20)
-        data = json.load(response)
-        answer = data["candidates"][0]["content"]["parts"][0]["text"]
+        answer = None
+        for model in dict.fromkeys(models):
+            endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{parse.quote(model, safe='-._')}:generateContent?key=" + parse.quote(api_key, safe="")
+            try:
+                with urlrequest.urlopen(urlrequest.Request(endpoint, data=body, headers={"Content-Type": "application/json"}), timeout=20) as response:
+                    data = json.load(response)
+                    answer = data["candidates"][0]["content"]["parts"][0]["text"]
+                    break
+            except HTTPError as exc:
+                if exc.code not in {429, 503}:
+                    raise
+        if not answer:
+            raise RuntimeError("All configured Gemini models were unavailable")
     except Exception as exc:
         # Keep the key and prompt out of the response, but retain enough detail
         # in Vercel logs to diagnose provider configuration problems.
