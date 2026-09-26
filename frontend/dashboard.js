@@ -244,6 +244,7 @@ async function askAssistant(form) {
   } catch (err) {
     pending.remove();
     addAssistantMessage(err.message, "assistant error");
+    window.portAPottyResumeSpeechMode?.();
   } finally {
     submit.disabled = false;
     input.focus();
@@ -285,6 +286,7 @@ function setupVoiceInput() {
   }
   async function transcribeTurn(chunks, mimeType) {
     setStatus("Transcribing with ElevenLabs…");
+    setVoiceState("thinking", "Transcribing with ElevenLabs…");
     const data = new FormData();
     data.append("audio", new Blob(chunks, { type: mimeType || "audio/webm" }), "speech-mode.webm");
     const response = await fetch("/api/assistant/transcribe", { method: "POST", body: data });
@@ -292,6 +294,7 @@ function setupVoiceInput() {
     if (!response.ok) throw new Error(result.error || "ElevenLabs could not transcribe that turn.");
     input.value = result.text;
     setStatus("Sending your question to Port a Potty…");
+    setVoiceState("thinking", "Thinking with Gemini…");
     form.requestSubmit();
   }
   function listenForTurn() {
