@@ -1,0 +1,159 @@
+===========================================================================
+ 15  SUPPORTING FILES AND TOOLS
+     requirements.txt, .gitignore, .venv, .state, README.md, git, pip
+===========================================================================
+
+These aren't the app's logic, but you can't build or share an app
+without them.
+
+
+THE PROJECT'S FOLDER LAYOUT
+---------------------------
+    HackUMBC-2026/
+      app.py                 the back-end server (doc 03)
+      requirements.txt       libraries to install
+      README.md              the project's front page on GitHub
+      .gitignore             files git should ignore
+      checks/                the security checks and helpers (docs 04, 08-14)
+      html/index.html        the page template (doc 05)
+      frontend/style.css     the look (doc 07)
+      frontend/dashboard.js  the behavior (doc 06)
+      sample_data/sample_auth.log   practice log (doc 11)
+      doc/                   these documents
+      .venv/                 installed libraries (not in git)
+      .state/                ports this computer closed (not in git)
+
+Files and folders starting with a dot are HIDDEN by default in Finder
+and Explorer. In VS Code you'll see them.
+
+
+requirements.txt
+----------------
+    flask>=3.0
+
+The list of outside libraries the project needs. ">=3.0" means
+"version 3.0 or newer". Install everything in it with:
+
+    pip install -r requirements.txt
+
+pip is Python's app store for libraries. Libraries come from
+pypi.org, a public catalog. Flask itself brings its own helpers
+(Jinja for templates, Werkzeug for the web plumbing), which pip installs
+automatically.
+
+
+.venv/  (the VIRTUAL ENVIRONMENT)
+---------------------------------
+Different projects might need different versions of the same library.
+A virtual environment is a private box of libraries for ONE project, so
+projects don't interfere.
+
+    python3 -m venv .venv          create the box (once)
+    source .venv/bin/activate      Mac/Linux: "use this box" (per terminal)
+    .venv\Scripts\Activate.ps1     Windows PowerShell: same
+    pip install -r requirements.txt    install into the box
+    python app.py                  run using the box's libraries
+
+When active, your terminal prompt shows (.venv). It's in .gitignore
+because it's large and specific to each computer; everyone recreates
+their own from requirements.txt.
+
+
+.state/
+-------
+Created by port_control.py (doc 13). Holds closed_ports.json. Ignored by
+git because which ports are closed is specific to each computer.
+
+
+.gitignore
+----------
+    .venv/
+    __pycache__/
+    .state/
+
+A list of things git should never track. __pycache__/ holds files
+Python creates automatically to start faster; they're rebuilt anytime.
+
+
+README.md
+---------
+The project's front page: what it is, how to run it on each OS, the
+color key, and how to add a check. GitHub shows it on the repository's
+main page. The .md means MARKDOWN: plain text with light formatting:
+    # Heading      **bold**      `code`      - bullet
+    ```bash
+    commands in a box
+    ```
+
+
+GIT AND GITHUB
+--------------
+GIT keeps the full history of every change, like unlimited "undo" plus
+a diary. GITHUB is a website that stores a copy online so a team can
+share it.
+
+Key words:
+    repository (repo)   the project folder plus its history
+    commit              a saved snapshot with a message describing it
+    branch              a separate line of work (main is the default)
+    push                upload your commits to GitHub
+    pull                download others' commits from GitHub
+
+The everyday loop:
+
+    git status                   what changed?
+    git diff                     show exactly what changed
+    git add app.py checks/       choose what to include in the snapshot
+    git commit -m "Add Wi-Fi check"   take the snapshot
+    git push                     upload
+    git pull                     get teammates' changes
+
+Undo an experiment you haven't committed:
+
+    git restore app.py           put app.py back to the last commit
+
+See history:
+
+    git log --oneline            one line per commit
+
+This project's history shows how it was built step by step, e.g.:
+    a4c73de updated folder structure
+    21ad253 Add Flask dashboard skeleton and IOC/CVE analyzer pipeline
+    cb53167 Add threat summary, new checks, and close/reopen port controls
+    cd0a2b1 Add Windows and Linux support for all checks and port controls
+    cd174d7 Add color key, in-use/review statuses, and plain-English explanations
+
+
+RUNNING THE APP (recap)
+-----------------------
+From the project folder:
+
+  Mac / Linux:
+      source .venv/bin/activate      (after creating it once)
+      python app.py
+  Windows (PowerShell):
+      .venv\Scripts\Activate.ps1
+      python app.py
+
+Then open http://127.0.0.1:5000/ . Stop with Ctrl+C in the terminal.
+
+The terminal shows a line for every request, which is the best window
+into the back end:
+
+    127.0.0.1 - - [26/Sep/2026 16:37:45] "GET / HTTP/1.1" 200 -
+    127.0.0.1 - - [26/Sep/2026 16:37:45] "GET /static/style.css HTTP/1.1" 200 -
+
+If Python crashes, the error (called a TRACEBACK) appears there too.
+Read it from the BOTTOM up: the last line says what went wrong, the
+lines above show which file and line number it happened on.
+
+
+DEBUGGING TOOLKIT
+-----------------
+  Back end problems  -> the terminal running app.py (tracebacks)
+                     -> add print(something) lines; output shows in the terminal
+                     -> http://127.0.0.1:5000/api/scan to see the raw data
+  Front end problems -> browser Developer Tools (F12):
+                        Console tab: JavaScript errors
+                        Network tab: every request, its status and response
+                        Elements tab / right-click "Inspect": HTML and CSS

@@ -1,0 +1,200 @@
+===========================================================================
+ 08  PORT SCANNING  -  checks/port_scan.py  (the "Local Port Assessor")
+===========================================================================
+
+WHAT IT IS
+----------
+The first and simplest security check. It knocks on 10 well-known
+"doors" (ports) of your own computer that attackers love, and reports
+which ones answer. For each port it explains what it is for, which
+program has it open, why it's risky and what to do.
+
+
+HOW YOU CHECK IF A PORT IS OPEN
+-------------------------------
+The same way a program connects to a website: try to connect. If
+something answers, the port is open. If the computer refuses, it's
+closed. This is exactly what attackers' scanning tools do, just
+pointed at your own machine (127.0.0.1) so it's safe and legal.
+
+Python's built-in socket module does the connecting. A SOCKET is one
+end of a network connection, like one end of a phone call.
+
+
+THE CODE
+--------
+
+--- The list of risky ports --------------------------------------------
+
+    # port -> (service name, why it's risky, recommendation)
+    RISKY_PORTS = {
+        21:   ("FTP",    "Transmits credentials in plaintext", "Disable FTP or switch to SFTP/FTPS"),
+        23:   ("Telnet", "Transmits everything in plaintext",  "Disable Telnet; use SSH instead"),
+        25:   ("SMTP",   "Can be abused as an open mail relay", "Restrict to trusted hosts or disable"),
+        135:  ("MSRPC",  "Common target for Windows exploits",  "Firewall off from untrusted networks"),
+        139:  ("NetBIOS", ...),   445: ("SMB", ...),   1433: ("MSSQL", ...),
+        3306: ("MySQL", ...),     3389: ("RDP", ...),  5900: ("VNC", ...),
+    }
+
+A dictionary: port number -> a tuple of three texts. This is DATA, kept
+separate from the logic below, so adding an 11th port is one line.
+"Plaintext" means not encrypted: anyone on the network could read it.
+
+
+--- Knocking on one door ---------------------------------------------
+
+    def _scan_port(host, port, timeout=0.3):
+        """Return True if the port is open on host."""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(timeout)
+            return sock.connect_ex((host, port)) == 0
+
+  * socket.socket(AF_INET, SOCK_STREAM) makes a new socket.
+      AF_INET      = use IPv4 addresses (like 127.0.0.1)
+      SOCK_STREAM  = use TCP, the "reliable phone call" style of
+                     connection that almost all services use
+  * settimeout(0.3) = give up after 0.3 seconds of silence.
+  * connect_ex((host, port)) tries to connect. It returns 0 on success,
+    or an error number on failure. (connect() would raise an error
+    instead; connect_ex returns a number, which is simpler here.)
+  * == 0 turns that into True/False.
+  * The "with" block closes the socket afterwards (hang up the phone).
+
+
+--- Knocking on many doors at once ---------------------------------
+
+    def get_open_ports(ports, host="127.0.0.1"):
+        ports = list(ports)
+        # Scanned in parallel: on Windows a closed localhost port waits out the
+        # full timeout instead of refusing instantly.
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            results = pool.map(lambda port: _scan_port(host, port), ports)
+        return {port for port, is_open in zip(ports, results) if is_open}
+
+On a Mac, a closed port says "no" instantly. On Windows it often stays
+silent until the 0.3s timeout. 16 ports x 0.3s = about 5 seconds per
+page load. So we knock on all of them AT THE SAME TIME.
+
+  * ThreadPoolExecutor = a team of up to 16 helpers ("threads") who can
+    work at the same time.
+  * pool.map(function, ports) = give each helper one port to scan;
+    collect all the True/False answers in order.
+  * zip(ports, results) pairs them up: (21, False), (23, False), ...
+  * {port for ... if is_open} = a SET of just the open ones.
+
+Analogy: one person calling 16 phone numbers one after another vs 16
+people each calling one number at the same time.
+
+get_open_ports is also used by the IOC analyzer (doc 11), so the
+scanning code exists in exactly one place.
+
+
+--- The check itself ---------------------------------------------------
+
+    @register
+    class PortScanCheck(Check):
+        NAME = "Local Port Assessor"
+        DESCRIPTION = "Scans localhost for commonly risky open ports"
+
+        def run(self):
+            host = "127.0.0.1"
+            items = []
+            open_count = 0
+            closed_here = closed_ports()
+            open_ports = get_open_ports(RISKY_PORTS, host)
+
+Setup: an empty items list, the set of ports THIS DASHBOARD closed
+earlier (from port_control.py), and the set of open ports.
+
+For each risky port, one of three outcomes:
+
+    for port, (service, risk, recommendation) in RISKY_PORTS.items():
+        label = f"Port {port} · {service}"
+        what = port_info(port)[1] if port_info(port) else ""
+
+port_info() (from port_catalog.py, doc 10) gives the plain-English
+"what it does" text for the port.
+
+  OUTCOME 1: we closed it earlier
+
+        if port in closed_here:
+            items.append({
+                "label": label, "status": "ok",
+                "detail": f"{what} Closed by this dashboard (firewall rule). ...",
+                "action": {"kind": "reopen", "port": port},
+            })
+
+  Checked FIRST because on Windows the firewall doesn't block
+  connections a PC makes to itself, so a port we blocked could still
+  look "open" to our own scan. The "action" key makes the template
+  draw a Reopen button.
+
+  OUTCOME 2: it's open
+
+        elif port in open_ports:
+            open_count += 1
+            programs = programs_on_port(port)
+            known = [describe(program, port) for program in programs]
+            known = [info for info in known if info["known"]]
+
+  programs_on_port() (doc 09) asks the OS which programs use this port.
+  describe() (doc 10) says whether each one is a recognized app.
+  The second line keeps only the recognized ones. Then:
+
+            if known:                      -> status "review"  (amber)
+                "In use by Windows file sharing ... probably needs it."
+            elif programs:                 -> status "warning" (red)
+                "Open, used by unrecognized program(s): ..."
+            else:                          -> status "warning" (red)
+                "Open, but the program using it isn't visible without admin rights."
+
+  An open risky port that a known app uses is "needed but risky", so
+  amber; an unexplained one is red. Either way it gets a Close button:
+
+            "action": {"kind": "close", "port": port},
+
+  OUTCOME 3: it's closed
+
+        else:
+            items.append({"label": label, "status": "ok", "detail": f"Closed. {what}"})
+
+
+--- The panel's overall status ---------------------------------------
+
+    risks = sum(1 for item in items if item["status"] == "warning")
+    if open_count == 0:
+        status, summary = "ok", f"None of the {len(RISKY_PORTS)} commonly attacked ports are open"
+    else:
+        status = "warning" if risks else "review"
+        summary = f"{open_count} risky port(s) open"
+        ...
+    return {"status": status, "summary": summary, "items": items}
+
+sum(1 for ... if ...) counts matching items. The panel shows the worst
+thing inside it: red if any red item, else amber if anything is open,
+else green. Finally it returns the standard contract dictionary
+(doc 04).
+
+
+WHAT THIS CHECK CAN'T SEE
+-------------------------
+  * It only scans 127.0.0.1. A program listening only on your Wi-Fi
+    address (rare) wouldn't show here; listening_services.py (doc 09)
+    catches those by asking the OS directly.
+  * An open port doesn't prove the software behind it is vulnerable.
+    It means "there's a door; make sure you meant to have it".
+
+
+TRY IT
+------
+1. Open a door on purpose and watch the dashboard catch it. In a second
+   terminal, start Python's built-in mini web server on port 3306:
+
+       python3 -m http.server 3306      (Windows: python -m http.server 3306)
+
+   Reload the dashboard: Port 3306 shows as open (red, since "Python"
+   isn't a recognized database program). Press Ctrl+C in that terminal
+   to stop it and reload: closed again.
+
+2. Add port 8080 to RISKY_PORTS:
+       8080: ("HTTP-alt", "Often used by test servers left running", "Stop it when not in use"),

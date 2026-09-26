@@ -1,0 +1,302 @@
+===========================================================================
+ 01  HOW THE FRONT END AND BACK END WORK TOGETHER
+     The single most important idea in this whole project
+===========================================================================
+
+If you only read one document, read this one. Every other file in the
+project is one piece of the story told here.
+
+
+1. THE RESTAURANT ANALOGY
+-------------------------
+Imagine a restaurant:
+
+  THE DINING ROOM (front end)
+    What the customer sees: the menu, the table, the plate of food.
+    In our app: the web page in your browser.
+
+  THE WAITER (HTTP, the messages between them)
+    Carries orders from the table to the kitchen and plates back.
+    In our app: requests and responses over the network.
+
+  THE KITCHEN (back end)
+    Where the real work happens. Customers never go in there.
+    In our app: app.py and the checks/ folder, running in Python.
+
+  THE RECIPES (the checks)
+    Each dish has its own recipe. The kitchen follows every recipe on
+    the "menu of the day" and plates the results.
+    In our app: port_scan.py, listening_services.py, ioc_analyzer.py,
+    hardening.py.
+
+The browser can't look at your firewall or your running programs
+itself. Browsers are deliberately locked down so websites can't spy on
+your computer. So the browser ASKS the Python program, which is
+allowed to look, and the Python program sends back the answers.
+
+
+2. THE TWO HALVES, FILE BY FILE
+-------------------------------
+
+  BACK END (Python, runs in the terminal)        FRONT END (runs in the browser)
+  ---------------------------------------        -------------------------------
+  app.py              the server / front door    html/index.html   page layout
+  checks/base.py      runs every check           frontend/style.css    the look
+  checks/__init__.py  list of checks to run      frontend/dashboard.js clicks,
+  checks/port_scan.py         (a check)                              pop-ups,
+  checks/listening_services.py(a check)                              refresh
+  checks/ioc_analyzer.py      (a check)
+  checks/hardening.py         (a check)
+  checks/summary.py   builds the numbers/charts
+  checks/port_control.py  closes/reopens ports
+  checks/...          helpers used by the above
+
+One important twist: index.html is stored with the back end and FILLED
+IN by the back end before it's sent (see section 5, "templates"). So
+the back end builds the page, and the browser displays it.
+
+
+3. WHAT HAPPENS WHEN YOU OPEN THE PAGE
+--------------------------------------
+Follow one page load from start to finish. This is the heart of it.
+
+  STEP 0  You start the back end in a terminal:
+              python app.py
+          app.py starts a server that listens on door (port) 5000 of
+          this computer and waits.
+
+  STEP 1  You type http://127.0.0.1:5000/ into the browser.
+          The browser sends a REQUEST that basically says:
+              GET /          ("please GET me the thing at path /")
+
+  STEP 2  Flask (the library app.py uses) receives it and looks up
+          which Python function is in charge of path "/". In app.py:
+
+              @app.route("/")
+              def dashboard():
+                  results = run_all()
+                  return render_template("index.html", results=results,
+                                         summary=build_summary(results))
+
+          The line  @app.route("/")  is the label that says "this
+          function answers requests for /".
+
+  STEP 3  run_all() (in checks/base.py) runs every security check one
+          by one. Each check returns its findings as Python data, e.g.
+
+              {"status": "ok",
+               "summary": "None of the 10 commonly attacked ports are open",
+               "items": [ {"label": "Port 21 · FTP", "status": "ok",
+                           "detail": "Closed. Old file-transfer ..."}, ... ]}
+
+  STEP 4  build_summary(results) (checks/summary.py) counts things up:
+          how many risks, how many in use, the chart bars.
+
+  STEP 5  render_template("index.html", ...) takes the HTML TEMPLATE
+          (a page with blanks in it) and fills the blanks with the
+          results. Now it's a complete HTML page, just text.
+
+  STEP 6  Flask sends that HTML back to the browser as the RESPONSE.
+
+  STEP 7  The browser reads the HTML. It notices two more things the
+          page needs:
+              <link rel="stylesheet" href="/static/style.css">
+              <script src="/static/dashboard.js" defer></script>
+          so it sends two more requests:  GET /static/style.css  and
+          GET /static/dashboard.js. Flask hands those files back as-is.
+
+  STEP 8  The browser applies the CSS (colors, layout), runs the
+          JavaScript (which sets up the buttons), and draws the page.
+
+  Picture it:
+
+   BROWSER                                   PYTHON (app.py)
+   -------                                   ---------------
+   GET /  ------------------------------->   dashboard()
+                                               run_all()  -> every check
+                                               build_summary()
+                                               render_template()
+          <-------------------------------   finished HTML page
+   GET /static/style.css  --------------->   (sends the file)
+          <-------------------------------   CSS text
+   GET /static/dashboard.js ------------->   (sends the file)
+          <-------------------------------   JavaScript text
+   draws the page, sets up buttons
+
+
+4. WHAT HAPPENS WHEN YOU CLICK "CLOSE PORT"
+-------------------------------------------
+This is the other direction: the front end asks the back end to DO
+something, not just show something.
+
+  STEP 1  Each Close button in the page was written by the template
+          with the port number stored on it:
+
+              <button class="port-action close"
+                      data-kind="close" data-port="7000">Close port</button>
+
+  STEP 2  dashboard.js is listening for clicks. When you click, it
+          reads data-kind ("close") and data-port ("7000"), asks you to
+          confirm, then sends a request WITHOUT reloading the page:
+
+              fetch(`/api/ports/${port}/${kind}`, {
+                method: "POST",
+                headers: { "X-Dashboard": "1" },
+              });
+
+          That becomes:  POST /api/ports/7000/close
+
+          GET vs POST: GET means "give me something" (safe, changes
+          nothing). POST means "do something" (changes things). Closing
+          a port changes the firewall, so it's a POST.
+
+  STEP 3  In app.py, this function is in charge of that path:
+
+              @app.post("/api/ports/<int:port>/<any(close, reopen):action>")
+              def port_action(port, action):
+
+          Flask pulls 7000 out of the address into the variable  port
+          and "close" into  action.
+
+  STEP 4  port_action checks the request really came from our own page
+          (a security check, explained in document 03), then calls
+          close_port(7000) in checks/port_control.py, which adds the
+          firewall rule (you see a password prompt).
+
+  STEP 5  The back end answers with JSON (data, not a page):
+
+              {"port": 7000, "action": "close", "blocked": true,
+               "level": "success",
+               "message": "Port 7000 closed. Use Reopen if something stops working."}
+
+  STEP 6  dashboard.js receives that JSON. It then quietly asks for the
+          whole page again (GET /), takes out the new main section, and
+          swaps it into the page you're looking at, so every number and
+          button updates without a reload. Finally it shows a green
+          pop-up ("toast") with the message.
+
+   BROWSER (dashboard.js)                    PYTHON (app.py)
+   ----------------------                    ---------------
+   click -> confirm()
+   POST /api/ports/7000/close ----------->   port_action(7000, "close")
+                                               security checks
+                                               close_port(7000)  -> firewall
+                                               is_blocked(7000)
+          <-------------------------------   JSON {"level":"success", ...}
+   GET / -------------------------------->   dashboard()  (runs all checks)
+          <-------------------------------   fresh HTML
+   swap new <main> into the page
+   show green "Port 7000 closed" pop-up
+
+
+5. THREE WAYS THE BACK END CAN ANSWER
+-------------------------------------
+Our server answers in three different "formats". Knowing which is
+which clears up most confusion:
+
+  (a) A FILLED-IN HTML PAGE      GET /
+      Built from the template html/index.html. For humans to look at.
+      This approach is called SERVER-SIDE RENDERING: the server builds
+      the page, the browser just shows it.
+
+  (b) A FILE, AS-IS              GET /static/style.css, /static/dashboard.js
+      Called STATIC files: they never change, Flask just sends them.
+
+  (c) JSON DATA                  GET /api/scan,  POST /api/ports/...
+      For PROGRAMS to read, not humans. Paths starting with /api/ are
+      the app's API (Application Programming Interface: a menu of
+      things other code can ask for). dashboard.js reads this JSON.
+      Try it: open http://127.0.0.1:5000/api/scan in the browser and
+      you'll see the raw data behind the page.
+
+
+6. TEMPLATES: A PAGE WITH BLANKS
+--------------------------------
+A template is like a form letter:
+
+    Dear {{ name }},
+    You have {{ count }} new messages.
+
+Fill in name="Sam", count=3, and you get a finished letter. Flask uses
+a template language called JINJA. In html/index.html you'll see:
+
+    <span class="hero-value">{{ summary.total }}</span>
+
+{{ ... }} means "put this value here". And loops:
+
+    {% for check in results %}
+      <section class="panel"> <h2>{{ check.name }}</h2> ... </section>
+    {% endfor %}
+
+{% ... %} means "do this logic": here, repeat the section once per
+check. That's why adding a new check makes a new panel appear without
+touching the HTML: the loop just runs one more time.
+
+The browser NEVER sees {{ }} or {% %}. By the time the page reaches the
+browser, Python has replaced them with real text.
+
+
+7. WHY IT'S SPLIT THIS WAY
+--------------------------
+  * The browser isn't allowed to look at the computer's ports and
+    firewall; Python is. So the checking MUST be in the back end.
+  * The browser is great at showing things and reacting to clicks; so
+    the display belongs in the front end.
+  * Keeping them separate means you can change the look (CSS) without
+    touching the security logic, or add a check without touching the
+    page.
+
+
+8. THE CONTRACT: THE SHAPE OF THE DATA
+--------------------------------------
+Front end and back end can only work together if they agree on the
+shape of the data passed between them. This agreement is often called
+a CONTRACT. Ours is written at the top of checks/base.py:
+
+    {
+        "status":  <status>,           # overall: the worst item status
+        "summary": "Short headline",
+        "items":   [{"label": str, "status": <status>, "detail": str}, ...],
+        "note":    "optional small print under the summary",
+    }
+
+Every check promises to return exactly this shape. The template
+promises to know how to draw exactly this shape. As long as both keep
+the promise, either side can change freely. When you build your own
+app (document 16), deciding this shape FIRST is the most useful thing
+you can do.
+
+The five statuses and their colors:
+
+    "warning"  red    RISK     dangerous: fix it
+    "review"   amber  REVIEW   probably needed or unrecognized: take a look
+    "info"     blue   IN USE   a recognized app/OS feature needs it: normal
+    "ok"       green  SAFE     closed, local-only, or protection on
+    "error"    gray   UNKNOWN  couldn't be checked
+
+The status is just a word in the data, e.g. "warning". The template
+turns it into a CSS class, class="item status-warning", and style.css
+says ".status-warning is red". Data -> class name -> color. That chain
+is the whole trick behind the color coding.
+
+
+9. CHECK YOUR UNDERSTANDING
+---------------------------
+Try to answer these before moving on (answers below).
+
+  1. Which file decides what happens at the address /api/scan?
+  2. Does the browser run Python?
+  3. Why does "Close port" use POST instead of GET?
+  4. Where do {{ }} marks get replaced with real values?
+  5. If you wanted a new panel "Wi-Fi Check", which side would you
+     change: front end, back end, or both?
+
+  Answers:
+  1. app.py, the function under @app.route("/api/scan").
+  2. No. The browser runs HTML/CSS/JavaScript. Python runs in the
+     terminal, on the same computer, as a separate program.
+  3. It changes something (the firewall). GET should only fetch things.
+  4. In Python, on the server, inside render_template(), before
+     sending the page.
+  5. Only the back end: a new file in checks/ and one line in
+     checks/__init__.py. The template's loop draws it automatically.

@@ -1,0 +1,244 @@
+===========================================================================
+ 11  DETECTING ATTACKS  -  the IOC / CVE Analyzer
+     checks/ioc_analyzer.py, signatures.py, log_parser.py, detector.py
+     and sample_data/sample_auth.log
+===========================================================================
+
+TWO NEW WORDS
+-------------
+IOC = Indicator Of Compromise. A clue that an attack happened or is
+happening, like footprints in the snow. Here: many failed logins from
+one address.
+
+CVE = Common Vulnerabilities and Exposures. A public catalog of known
+security bugs, each with an ID like CVE-2017-0144. That one is
+"EternalBlue", the Windows file-sharing bug the WannaCry ransomware
+used in 2017.
+
+
+THE PIPELINE: FOUR FILES, FOUR JOBS
+-----------------------------------
+This check is split like an assembly line, each station doing one job:
+
+    signatures.py   the RULEBOOK      numbers and patterns (data only)
+    log_parser.py   the READER        find a log file, pull out events
+    detector.py     the DETECTIVE     apply the rules to the events
+    ioc_analyzer.py the REPORTER      turn findings into a dashboard panel
+
+    load_log_lines() -> parse_failed_logins() -> detect_brute_force() --+
+                                                                         +--> panel
+    get_open_ports() -------------------------> detect_cve_ports()   ---+
+
+Why split it? Each piece can be understood, tested and changed on its
+own. The detective never touches files, so you can test it with a
+hand-typed list. The rulebook can be tuned without touching code.
+
+
+===========================================================================
+ signatures.py  -  the rulebook
+===========================================================================
+
+    BRUTE_FORCE_THRESHOLD = 4
+
+4 or more failed logins from one address = flagged.
+
+    FAILED_SSH_PATTERN = re.compile(
+        r"Failed password for (?:invalid user )?(?P<user>\S+) "
+        r"from (?P<ip>\d{1,3}(?:\.\d{1,3}){3})"
+    )
+
+A REGULAR EXPRESSION ("regex"): a pattern language for finding text.
+It's like a search with wildcards, but much more precise. Piece by
+piece:
+
+    Failed password for      the exact words
+    (?:invalid user )?       optionally the words "invalid user "
+                             ( ...)?  = "this part may or may not be there"
+    (?P<user>\S+)            capture one or more non-space characters and
+                             call it "user"      (\S = not a space, + = one or more)
+    from                     the exact word
+    (?P<ip>\d{1,3}(?:\.\d{1,3}){3})
+                             capture an IP address and call it "ip":
+                             \d{1,3}   1 to 3 digits          e.g. 203
+                             (?:\.\d{1,3}){3}  then ".digits" three times
+                                                            .0.113.45
+
+It matches this real-looking log line:
+
+    Sep 26 03:14:07 demo-host sshd[2201]: Failed password for root from 203.0.113.45 port 52144 ssh2
+                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                                          user = "root",  ip = "203.0.113.45"
+
+The r"..." (a "raw string") stops Python from treating backslashes
+specially, so the regex receives them intact.
+
+    CVE_PORT_MAP = {
+        21:   ("CVE-2011-2523", "vsftpd 2.3.4 backdoor gives a remote root shell"),
+        445:  ("CVE-2017-0144", "EternalBlue: SMBv1 remote code execution used by WannaCry"),
+        3389: ("CVE-2019-0708", "BlueKeep: pre-auth RDP remote code execution, wormable"),
+        ...
+    }
+
+Port -> the famous vulnerability that attacks it.
+
+
+===========================================================================
+ log_parser.py  -  the reader
+===========================================================================
+
+WHAT'S A LOG? Programs write a diary of what they do into log files.
+On Linux servers, every SSH login attempt (SSH = remote command-line
+login) is written to /var/log/auth.log or /var/log/secure.
+
+    REAL_LOG_PATHS = [Path("/var/log/auth.log"), Path("/var/log/secure")]
+    SAMPLE_LOG_PATH = Path(__file__).resolve().parent.parent / "sample_data" / "sample_auth.log"
+
+    def load_log_lines():
+        for path in REAL_LOG_PATHS:
+            try:
+                return path.read_text(errors="replace").splitlines(), str(path), False
+            except OSError:
+                continue
+        return SAMPLE_LOG_PATH.read_text().splitlines(), str(SAMPLE_LOG_PATH), True
+
+Try each real log. The first one that can be read wins. If none exist
+(Mac, Windows) or we lack permission (they usually need admin), fall
+back to the bundled SAMPLE log. It returns THREE things at once (a
+tuple): the lines, where they came from, and whether it's sample data,
+so the panel can honestly say "SAMPLE DATA". errors="replace" means
+"if a character is garbled, substitute a placeholder instead of
+crashing". splitlines() turns one big text into a list of lines.
+
+    def parse_failed_logins(lines):
+        events = []
+        for line in lines:
+            m = FAILED_SSH_PATTERN.search(line)
+            if m:
+                events.append({"user": m["user"], "ip": m["ip"], "raw": line.strip()})
+        return events
+
+For each line, try the regex. If it matches, record an EVENT with the
+captured user and ip. Lines that aren't failed logins (successful
+logins, other messages) are ignored. Raw text in, structured data out:
+that's what "parsing" means.
+
+
+===========================================================================
+ sample_data/sample_auth.log  -  the practice log
+===========================================================================
+
+Invented log lines using IP addresses reserved for documentation
+(203.0.113.x, 198.51.100.x, 192.0.2.x: they belong to nobody). It's
+designed to show each case:
+
+    203.0.113.45    6 failures (root, admin)                -> flagged
+    198.51.100.23   4 failures (oracle, test, ubuntu, pi)   -> flagged (exactly at 4)
+    192.0.2.77      3 failures                              -> just under: NOT flagged
+    192.0.2.10      1 failure then a success                -> a normal typo
+
+The 3-failure IP demonstrates the rule's weakness: an attacker who
+stays under the threshold isn't caught (the README admits this).
+
+
+===========================================================================
+ detector.py  -  the detective
+===========================================================================
+
+"Pure functions": data in, answer out, no files or network. Easy to
+test.
+
+    def count_failures_by_ip(events):
+        return Counter(event["ip"] for event in events)
+
+Counter is a Python tool that counts things:
+    Counter(["a", "b", "a"])  ->  {"a": 2, "b": 1}
+So this gives {"203.0.113.45": 6, "198.51.100.23": 4, ...}.
+
+    def detect_brute_force(events, threshold=BRUTE_FORCE_THRESHOLD):
+        users_by_ip = {}
+        for event in events:
+            users_by_ip.setdefault(event["ip"], set()).add(event["user"])
+
+        return [
+            {"ip": ip, "count": count, "users": sorted(users_by_ip[ip])}
+            for ip, count in count_failures_by_ip(events).most_common()
+            if count >= threshold
+        ]
+
+  * users_by_ip collects which usernames each IP tried.
+    setdefault(key, set()) = "get the set for this IP, creating an
+    empty one first if needed", then .add() the username.
+  * most_common() lists IPs from most to fewest failures.
+  * keep only those at or above the threshold.
+
+    def detect_cve_ports(open_ports):
+        findings = []
+        for port in sorted(open_ports):
+            if port in CVE_PORT_MAP:
+                cve, description = CVE_PORT_MAP[port]
+                findings.append({"port": port, "cve": cve, "description": description})
+        return findings
+
+For each open port that's in the CVE table, make a finding.
+
+
+===========================================================================
+ ioc_analyzer.py  -  the reporter
+===========================================================================
+
+Runs the pipeline and writes the panel:
+
+    lines, source, is_sample = load_log_lines()
+    events = parse_failed_logins(lines)
+    brute_force = detect_brute_force(events)
+
+Then builds items:
+  * each flagged IP -> red "warning", explaining what brute force means
+    and what to do ("block this IP ... switch SSH to key-only logins")
+  * each IP under the threshold -> green, "Usually a mistyped password"
+  * no events at all -> one green "No failed SSH logins in the log"
+
+    cve_hits = detect_cve_ports(get_open_ports(CVE_PORT_MAP.keys()) - closed_ports())
+
+Scan the 6 CVE ports (reusing port_scan.py's scanner), minus any port
+this dashboard has firewalled, then look them up. Each hit -> red item,
+with the honest caveat that "an open port doesn't prove the vulnerable
+version is installed".
+
+It also returns two optional extras from the contract:
+
+    chart = {
+        "title": "Failed SSH logins by source IP",
+        "note": f"Flagged at {BRUTE_FORCE_THRESHOLD}+ failures" + ...,
+        "bars": [
+            {"label": ip, "value": count, "flagged": count >= BRUTE_FORCE_THRESHOLD}
+            for ip, count in count_failures_by_ip(events).most_common(8)
+        ],
+    }
+
+The data for the bar chart in the summary (doc 14 draws it).
+
+    note = (f"Log source: SAMPLE DATA ({source}). ..." if is_sample else f"Log source: {source}")
+
+Always states where the data came from, so sample data is never
+mistaken for a real attack.
+
+
+LIMITATIONS (important for judges and for honesty)
+--------------------------------------------------
+  * Counts failures across the whole log, not per hour.
+  * Only understands the standard Linux SSH message format.
+  * The CVE table is a small hand-made list, not a live database.
+
+
+TRY IT
+------
+1. Lower BRUTE_FORCE_THRESHOLD to 3 in signatures.py: 192.0.2.77 turns red.
+2. Add a line to sample_data/sample_auth.log (copy an existing Failed
+   password line and change the IP). Watch a new bar appear.
+3. Test the detective alone in the  >>>  prompt (from the project folder):
+
+       from checks.detector import detect_brute_force
+       events = [{"ip": "1.2.3.4", "user": "root"}] * 5
+       detect_brute_force(events)
+       # -> [{'ip': '1.2.3.4', 'count': 5, 'users': ['root']}]

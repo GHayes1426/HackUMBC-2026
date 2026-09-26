@@ -1,0 +1,119 @@
+===========================================================================
+ 14  THE SUMMARY AND CHARTS  -  checks/summary.py
+===========================================================================
+
+WHAT IT IS
+----------
+The top of the page: the big number, the color key, one tile per
+check, and the bar charts. summary.py doesn't check anything itself. It
+reads every check's results and COUNTS. Like the scoreboard at a game:
+it doesn't play, it adds up.
+
+app.py calls it right after running the checks:
+
+    results = run_all()
+    return render_template("index.html", results=results, summary=build_summary(results))
+
+
+THE STATUS LIST (the source of the color key)
+---------------------------------------------
+    STATUSES = [
+        ("warning", "Risk", "Something dangerous is open or turned off, ... Fix these first."),
+        ("review", "Review", "Probably needed, but worth a look: ..."),
+        ("info", "In use", "A recognized app or OS feature needs this port. ..."),
+        ("ok", "Safe", "Closed, only reachable from this computer, or a protection that's turned on."),
+        ("error", "Unknown", "Couldn't be checked on this system, ..."),
+    ]
+
+Each entry: (the status word used in the data, the label shown on
+tags, the explanation shown in the key). The template loops over this
+list to draw the key, and uses it to turn "warning" into "Risk" on
+every tag. One list = the key can never disagree with the tags.
+
+
+SMALL HELPERS
+-------------
+    def _count(items, status):
+        return sum(1 for item in items if item["status"] == status)
+
+"How many of these items have this status?" sum(1 for ... if ...) adds
+1 for each match.
+
+    def _with_widths(bars):
+        top = max((bar["value"] for bar in bars), default=0) or 1
+        return [{**bar, "pct": round(bar["value"] / top * 100, 1)} for bar in bars]
+
+Works out how wide each bar should be. The biggest value gets 100%,
+others are proportional. With values 6, 4, 3, 1:
+    6/6 = 100%   4/6 = 66.7%   3/6 = 50%   1/6 = 16.7%
+  * default=0 handles an empty list; "or 1" avoids dividing by zero
+    when every value is 0.
+  * {**bar, "pct": ...} copies the bar's data and adds "pct".
+The template then writes style="width: 66.7%". That's the entire
+"charting library".
+
+
+build_summary(results), STEP BY STEP
+------------------------------------
+    all_items = [item for r in results for item in r["items"]]
+
+One flat list of every item from every check (a list comprehension
+with two for's = "for each result, for each item in it").
+
+    for r in results:
+        risks, reviews = _count(r["items"], "warning"), _count(r["items"], "review")
+        categories.append({
+            "name": r["name"], "status": r["status"],
+            "risks": risks, "reviews": reviews,
+            "in_use": _count(r["items"], "info"),
+            "findings": risks + reviews,
+        })
+
+One "category" per check, used for the tiles ("2 risk · 0 review ·
+0 in use"). Note findings = risks + reviews: IN USE items are NOT
+threats, so they don't count toward the big number.
+
+    charts = [
+        {"title": "Potential threats by check", ...
+         "bars": _with_widths([
+             {"label": c["name"], "value": c["findings"],
+              "tone": "warning" if c["risks"] else "review" if c["reviews"] else "ok"}
+             for c in categories])},
+        {"title": "Everything checked, by status", ...
+         "bars": _with_widths([
+             {"label": label, "value": _count(all_items, status), "tone": status}
+             for status, label, _ in STATUSES])},
+    ]
+
+Two built-in charts. "tone" picks each bar's color (CSS class
+tone-warning, tone-review...). The chained  A if x else B if y else C
+reads: red if the check has any risks, amber if it has reviews,
+otherwise green.
+
+    for r in results:
+        if r.get("chart") and r["chart"]["bars"]:
+            charts.append({**r["chart"], "bars": _with_widths(r["chart"]["bars"])})
+
+Any check can add its own chart simply by including a "chart" key in
+its result, like the IOC analyzer's "Failed SSH logins by source IP".
+Plugin idea again: summary.py doesn't know which checks have charts.
+
+    return {
+        "total": sum(c["findings"] for c in categories),
+        "risks": ..., "reviews": ..., "in_use": ...,
+        "checks_clear": sum(1 for c in categories if c["status"] in ("ok", "info")),
+        "categories": categories,
+        "charts": charts,
+        "statuses": STATUSES,
+        "tags": {status: label for status, label, _ in STATUSES},
+    }
+
+Everything the template needs, in one dictionary. The last line is a
+DICTIONARY COMPREHENSION building {"warning": "Risk", "review":
+"Review", ...} for quick lookups like summary.tags[item.status].
+
+
+TRY IT
+------
+Open http://127.0.0.1:5000/api/scan and scroll to "summary" at the
+bottom: that's exactly this function's output, as JSON.

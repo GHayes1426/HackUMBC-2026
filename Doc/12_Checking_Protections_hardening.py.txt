@@ -1,0 +1,175 @@
+===========================================================================
+ 12  CHECKING THE COMPUTER'S PROTECTIONS  -  checks/hardening.py
+     (the "System Hardening" panel)
+===========================================================================
+
+WHAT IT IS
+----------
+"Hardening" means turning on a system's defenses and turning off what
+you don't need. Every OS ships with protections (firewall, disk
+encryption, antivirus...) but some may be switched off. This check
+asks the OS about each one, using only READ-ONLY commands (it never
+changes anything), and explains what each protection does.
+
+    macOS   : Firewall, Stealth mode, FileVault, Gatekeeper, SIP
+    Windows : Defender Firewall, Defender Antivirus, BitLocker, UAC
+    Linux   : ufw firewall, SSH root login, SSH password login,
+              automatic security updates
+
+
+THE DESIGN: "PROBES"
+--------------------
+Each protection has a small function called a PROBE. Every probe
+answers in the same shape, a pair (status, detail):
+
+    ("ok", "On")
+    ("warning", "OFF. <how to fix>")
+    ("error", "Couldn't be read on this system")
+
+Each OS has a list of (label, probe) pairs, and one loop runs whichever
+list matches the computer. Same "shape of the plug" idea as the plugin
+system (doc 04), one level smaller.
+
+
+A PROBE FACTORY FOR SIMPLE CASES (macOS)
+----------------------------------------
+Many Mac checks are "run a command, look for some words in the answer".
+Instead of writing that five times, one function BUILDS probes:
+
+    def _text_probe(command, on_text, fix):
+        """Probe that runs a command and looks for on_text in its output."""
+        def probe():
+            code, out = run(command)
+            out = out.lower()
+            if code is None or "permission" in out or "root" in out:
+                return UNREADABLE
+            if on_text in out and "disabled" not in out:
+                return "ok", "On"
+            return "warning", f"OFF. {fix}."
+        return probe
+
+A function that makes and returns another function. The inner probe()
+"remembers" the command, on_text and fix it was made with (this is
+called a CLOSURE). Then:
+
+    MACOS_PROBES = [
+        ("Firewall", _text_probe([SOCKETFILTERFW, "--getglobalstate"], "enabled",
+                                 "Turn on in System Settings > Network > Firewall")),
+        ("FileVault disk encryption", _text_probe(["fdesetup", "status"], "filevault is on",
+                                                  "Turn on in System Settings > Privacy & Security > FileVault")),
+        ...
+    ]
+
+e.g. the command  fdesetup status  prints "FileVault is On." when disk
+encryption is on, so the probe looks for "filevault is on".
+
+
+WINDOWS PROBES: ONE FUNCTION EACH
+---------------------------------
+Windows answers are structured, so each gets its own function.
+
+    def _windows_firewall():
+        rows = powershell_json(
+            "Get-NetFirewallProfile | Select-Object Name, @{n='On'; e={[string]$_.Enabled}}"
+        )
+        if not rows:
+            return UNREADABLE
+        off = [row["Name"] for row in rows if row.get("On") != "True"]
+        if off:
+            return "warning", f"OFF for {', '.join(off)} network(s). ..."
+        return "ok", "On for Domain, Private and Public networks"
+
+Windows has three firewall "profiles" (Domain = work network, Private =
+home, Public = cafés). The PowerShell command lists each with its
+on/off state; the Python finds any that are off.
+
+    def _windows_bitlocker():
+        rows = powershell_json(
+            "(New-Object -ComObject Shell.Application).NameSpace($env:SystemDrive + '\\')"
+            ".Self.ExtendedProperty('System.Volume.BitLockerProtection')"
+        )
+        value = rows[0] if rows else None
+        if value in (1, 3, 6):  return "ok", "On for the system drive"
+        if value == 5:          return "warning", "SUSPENDED. ..."
+        if value == 2:          return "warning", "OFF. ..."
+        return "error", "Not available on this edition of Windows, or couldn't be read"
+
+The "official" BitLocker command needs admin rights, so this reads the
+same property File Explorer shows, which doesn't. The number is a code
+(1 = on, 2 = off, 5 = suspended...).
+
+    def _windows_uac():
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                                r"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System") as key:
+                enabled, _ = winreg.QueryValueEx(key, "EnableLUA")
+        except (ImportError, OSError):
+            return UNREADABLE
+
+UAC is the "Do you want to allow this app to make changes?" prompt.
+Its setting lives in the Windows REGISTRY (Windows' big settings
+database); winreg is Python's built-in way to read it. The import is
+inside the try because winreg only exists on Windows: on a Mac the
+import fails and we return "couldn't be read" rather than crashing.
+
+
+LINUX PROBES: READING CONFIG FILES
+----------------------------------
+    def _sshd_option(name):
+        paths = sorted(Path("/etc/ssh/sshd_config.d").glob("*.conf")) + [Path("/etc/ssh/sshd_config")]
+        for path in paths:
+            ...
+            for line in lines:
+                parts = line.split()
+                if len(parts) >= 2 and parts[0].lower() == name.lower():
+                    return parts[1].lower()
+        return None
+
+The SSH server's settings are plain text lines like
+"PermitRootLogin no". This finds the first value for a setting (the
+SSH server uses the first one it sees). .glob("*.conf") lists all
+files ending .conf in a folder.
+
+
+THE MAIN LOOP AND THE EXPLANATIONS
+----------------------------------
+    PURPOSE = {
+        "Firewall": "Blocks other devices from connecting to apps you haven't allowed.",
+        "FileVault disk encryption": "Encrypts the whole disk, so a lost or stolen Mac's files can't be read without your password.",
+        ...
+    }
+
+    def run(self):
+        probes = {"Darwin": MACOS_PROBES, "Windows": WINDOWS_PROBES, "Linux": LINUX_PROBES}.get(OS)
+        ...
+        for label, probe in probes:
+            status, detail = probe()
+            purpose = PURPOSE.get(label, "")
+            # State first, then what the protection does, then how to fix it.
+            if detail.startswith("OFF. "):
+                detail = f"OFF. {purpose} To fix: {detail[5:]}"
+            else:
+                detail = f"{detail.rstrip('.')}. {purpose}"
+            items.append({"label": label, "status": status, "detail": detail.strip()})
+
+  * Pick the probe list for this OS (dispatch table again).
+  * Run each probe.
+  * Combine the state, the plain-English purpose and the fix into one
+    sentence, e.g.
+      "OFF. Makes the Mac ignore network probes (like ping), so scanners
+       can't easily tell it's there. To fix: Turn on in System Settings
+       > Network > Firewall > Options."
+    detail[5:] = the text after the first 5 characters ("OFF. ").
+  * Panel status: red if any protection is off, green otherwise.
+
+
+TRY IT
+------
+1. Run the Mac commands yourself and compare:
+       /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate
+       fdesetup status
+       spctl --status
+2. Add a new Mac probe: is the screen saver password required? Look up
+   a command online, then add a line to MACOS_PROBES using _text_probe
+   and a PURPOSE entry.
