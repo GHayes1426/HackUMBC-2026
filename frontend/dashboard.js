@@ -230,33 +230,80 @@ async function askAssistant(form) {
 function setupVoiceInput() {
   const button = document.getElementById("assistant-talk");
   const input = document.getElementById("assistant-input");
+  const form = document.getElementById("assistant-form");
   if (!button || !input) return;
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   let recognition;
   let listening = false;
+  let recorder;
+  let stream;
   window.portAPottyVoiceEnabled = false;
-  if (!Recognition) {
+  if (!Recognition && !(navigator.mediaDevices?.getUserMedia && window.MediaRecorder)) {
     button.textContent = "Voice unavailable";
     button.disabled = true;
-    button.title = "Your browser does not provide speech recognition.";
+    button.title = "Use a current Chrome or Edge browser and allow microphone access.";
     return;
   }
-  recognition = new Recognition();
-  recognition.lang = "en-US";
-  recognition.interimResults = false;
-  recognition.continuous = false;
-  recognition.onresult = (event) => {
-    input.value = event.results[0][0].transcript;
-    input.focus();
-  };
-  recognition.onerror = () => toast("Microphone input was unavailable. Check browser microphone permission.", "error");
-  recognition.onend = () => {
+  function resetButton() {
     listening = false;
     button.textContent = "Talk to assistant";
     button.setAttribute("aria-pressed", "false");
-  };
+  }
+  if (Recognition) {
+    recognition = new Recognition();
+    recognition.lang = "en-US";
+    recognition.interimResults = false;
+    recognition.continuous = false;
+    recognition.onresult = (event) => {
+      input.value = event.results[0][0].transcript;
+      input.focus();
+      form.requestSubmit();
+    };
+    recognition.onerror = () => toast("Microphone input was unavailable. Check browser microphone permission.", "error");
+    recognition.onend = resetButton;
+  }
+  async function startElevenLabsRecording() {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const chunks = [];
+      recorder = new MediaRecorder(stream);
+      recorder.ondataavailable = (event) => chunks.push(event.data);
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((track) => track.stop());
+        resetButton();
+        button.textContent = "Transcribing…";
+        button.disabled = true;
+        try {
+          const data = new FormData();
+          data.append("audio", new Blob(chunks, { type: recorder.mimeType || "audio/webm" }), "question.webm");
+          const response = await fetch("/api/assistant/transcribe", { method: "POST", body: data });
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(result.error || "Could not transcribe the recording.");
+          input.value = result.text;
+          form.requestSubmit();
+        } catch (err) {
+          toast(err.message, "error");
+        } finally {
+          button.disabled = false;
+          resetButton();
+        }
+      };
+      recorder.start();
+      listening = true;
+      button.textContent = "Recording… click to stop";
+      button.setAttribute("aria-pressed", "true");
+    } catch {
+      toast("Microphone permission was denied or unavailable. Allow microphone access in this browser, then try again.", "error");
+      resetButton();
+    }
+  }
   button.addEventListener("click", () => {
     window.portAPottyVoiceEnabled = true;
+    if (!Recognition) {
+      if (recorder?.state === "recording") recorder.stop();
+      else startElevenLabsRecording();
+      return;
+    }
     if (listening) {
       recognition.stop();
       return;

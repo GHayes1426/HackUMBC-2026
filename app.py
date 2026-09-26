@@ -18,6 +18,7 @@ import json
 import os
 from pathlib import Path
 from urllib import parse, request as urlrequest
+from uuid import uuid4
 
 from flask import Flask, Response, abort, jsonify, render_template, request
 
@@ -148,6 +149,42 @@ def assistant_speak():
         app.logger.warning("ElevenLabs speech request failed: %s", exc)
         return jsonify(error="ElevenLabs could not generate speech right now."), 502
     return Response(audio, mimetype="audio/mpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/assistant/transcribe")
+def assistant_transcribe():
+    """Transcribe a short microphone recording through ElevenLabs Scribe."""
+    api_key = os.environ.get("ELEVENLABS_API_KEY")
+    audio = request.files.get("audio")
+    if not api_key:
+        return jsonify(error="ElevenLabs speech-to-text is not configured on this deployment."), 503
+    if audio is None or not audio.filename:
+        return jsonify(error="Record a short audio clip first."), 400
+    audio_bytes = audio.read(10 * 1024 * 1024 + 1)
+    if not audio_bytes or len(audio_bytes) > 10 * 1024 * 1024:
+        return jsonify(error="Audio recordings must be between 1 byte and 10 MB."), 400
+    boundary = f"----PortAPotty{uuid4().hex}"
+    content_type = audio.mimetype or "audio/webm"
+    body = b"".join((
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"model_id\"\r\n\r\nscribe_v2\r\n".encode(),
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{secure_filename(audio.filename) or 'recording.webm'}\"\r\nContent-Type: {content_type}\r\n\r\n".encode(),
+        audio_bytes,
+        f"\r\n--{boundary}--\r\n".encode(),
+    ))
+    try:
+        eleven_request = urlrequest.Request(
+            "https://api.elevenlabs.io/v1/speech-to-text",
+            data=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}", "xi-api-key": api_key},
+        )
+        with urlrequest.urlopen(eleven_request, timeout=45) as eleven_response:
+            transcript = json.load(eleven_response).get("text", "").strip()
+    except Exception as exc:
+        app.logger.warning("ElevenLabs transcription request failed: %s", exc)
+        return jsonify(error="ElevenLabs could not transcribe that recording right now."), 502
+    if not transcript:
+        return jsonify(error="No speech was detected in that recording."), 422
+    return jsonify(text=transcript)
 
 
 @app.route("/api/settings/detection", methods=["GET", "POST"])
