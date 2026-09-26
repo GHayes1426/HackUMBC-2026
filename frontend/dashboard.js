@@ -179,12 +179,26 @@ function addAssistantMessage(text, role = "assistant") {
   messages.scrollTop = messages.scrollHeight;
 }
 
-function speakAssistantAnswer(text) {
-  if (!window.portAPottyVoiceEnabled || !("speechSynthesis" in window)) return;
-  window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = "en-US";
-  window.speechSynthesis.speak(utterance);
+async function speakAssistantAnswer(text) {
+  if (!window.portAPottyVoiceEnabled) return;
+  try {
+    const response = await fetch("/api/assistant/speak", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!response.ok) throw new Error("ElevenLabs voice unavailable");
+    const audio = new Audio(URL.createObjectURL(await response.blob()));
+    audio.addEventListener("ended", () => URL.revokeObjectURL(audio.src), { once: true });
+    await audio.play();
+  } catch {
+    // The browser voice keeps the conversation usable if the TTS quota is gone.
+    if (!("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "en-US";
+    window.speechSynthesis.speak(utterance);
+  }
 }
 
 async function askAssistant(form) {

@@ -19,7 +19,7 @@ import os
 from pathlib import Path
 from urllib import parse, request as urlrequest
 
-from flask import Flask, abort, jsonify, render_template, request
+from flask import Flask, Response, abort, jsonify, render_template, request
 
 import checks  # noqa: F401  -- importing the package registers every check
 from checks.base import run_all
@@ -123,6 +123,31 @@ def assistant():
         app.logger.warning("Gemini request failed: %s", exc)
         return jsonify(error="Gemini could not generate an explanation right now."), 502
     return jsonify(answer=answer)
+
+
+@app.post("/api/assistant/speak")
+def assistant_speak():
+    """Return ElevenLabs speech without exposing the API key or voice ID."""
+    payload = request.get_json(silent=True)
+    text = payload.get("text", "") if isinstance(payload, dict) else ""
+    api_key = os.environ.get("ELEVENLABS_API_KEY")
+    voice_id = os.environ.get("ELEVENLABS_VOICE_ID")
+    if not api_key or not voice_id:
+        return jsonify(error="ElevenLabs voice is not configured on this deployment."), 503
+    if not isinstance(text, str) or not text.strip() or len(text) > 5000:
+        return jsonify(error="Speech text must be between 1 and 5,000 characters."), 400
+    try:
+        eleven_request = urlrequest.Request(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{parse.quote(voice_id, safe='')}",
+            data=json.dumps({"text": text.strip(), "model_id": "eleven_multilingual_v2"}).encode(),
+            headers={"Content-Type": "application/json", "xi-api-key": api_key, "Accept": "audio/mpeg"},
+        )
+        with urlrequest.urlopen(eleven_request, timeout=30) as eleven_response:
+            audio = eleven_response.read()
+    except Exception as exc:
+        app.logger.warning("ElevenLabs speech request failed: %s", exc)
+        return jsonify(error="ElevenLabs could not generate speech right now."), 502
+    return Response(audio, mimetype="audio/mpeg", headers={"Cache-Control": "no-store"})
 
 
 @app.route("/api/settings/detection", methods=["GET", "POST"])
