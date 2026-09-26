@@ -1,8 +1,8 @@
 // Close / Reopen port buttons, live refresh, and notifications.
 //
 // Each button carries data-kind ("close" | "reopen") and data-port. Clicking
-// POSTs to app.py's /api/ports/<port>/<kind>. On macOS the backend triggers
-// the system's administrator password prompt, so the request can take a
+// POSTs to app.py's /api/ports/<port>/<kind>. The backend triggers the OS's
+// admin prompt (macOS password / Windows UAC), so the request can take a
 // while. Afterwards refresh() re-fetches "/" (which re-runs every check) and
 // swaps in the new <main>, so the page updates in place without a reload.
 // Results and errors appear as toasts in #toasts, fixed on screen so
@@ -57,7 +57,7 @@ async function portAction(button) {
 
   button.disabled = true;
   button.textContent = kind === "close" ? "Closing…" : "Reopening…";
-  const waiting = toast("Waiting for administrator approval. Enter your password in the macOS prompt.", "info");
+  const waiting = toast("Waiting for administrator approval. Approve the password or permission prompt on this computer.", "info");
 
   let data;
   try {

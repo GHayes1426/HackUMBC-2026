@@ -17,8 +17,7 @@ from flask import Flask, abort, jsonify, render_template, request
 
 import checks  # noqa: F401  -- importing the package registers every check
 from checks.base import run_all
-from checks.port_control import DASHBOARD_PORT, PortControlError, close_port, reopen_port
-from checks.port_scan import get_open_ports
+from checks.port_control import DASHBOARD_PORT, PortControlError, close_port, is_blocked, reopen_port
 from checks.summary import build_summary
 
 app = Flask(
@@ -55,9 +54,9 @@ def port_action(port, action):
     except PortControlError as exc:
         return jsonify(error=str(exc)), 400
 
-    # Re-scan so the user is told whether the change actually took effect.
-    still_open = port in get_open_ports([port])
-    if action == "close" and still_open:
+    # Tell the user whether the change actually took effect.
+    blocked = is_blocked(port)
+    if action == "close" and not blocked:
         level = "warning"
         message = (f"The firewall rule was added, but port {port} is still accepting connections. "
                    "Try Reopen, then Close again, or stop the program using the port.")
@@ -65,7 +64,7 @@ def port_action(port, action):
         level, message = "success", f"Port {port} closed. Use Reopen if something stops working."
     else:
         level, message = "success", f"Port {port} reopened."
-    return jsonify(port=port, action=action, open=still_open, level=level, message=message)
+    return jsonify(port=port, action=action, blocked=blocked, level=level, message=message)
 
 
 if __name__ == "__main__":

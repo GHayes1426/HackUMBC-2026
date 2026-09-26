@@ -7,19 +7,23 @@ just removing the rule. Ports this dashboard has closed are saved in
 .state/closed_ports.json, so they can be reopened later, even after a restart.
 
 Backends:
-    macOS -- rules in the pf anchor com.apple/hackumbc, applied through the
-             standard macOS administrator password prompt
-    Linux -- iptables rules tagged "hackumbc", applied with sudo -n
-             (works when app.py runs as root or sudo is already authorized)
+    macOS   -- rules in the pf anchor com.apple/hackumbc, applied through the
+               standard macOS administrator password prompt
+    Windows -- Windows Defender Firewall rules named hackumbc-<port>, applied
+               through the UAC "allow changes" prompt
+    Linux   -- iptables rules tagged "hackumbc", applied with sudo -n
+               (works when app.py runs as root or sudo is already authorized)
 
-Not a Check: app.py calls close_port()/reopen_port() from its API routes,
-and the port checks call closed_ports() to decide which button to show.
+Not a Check: app.py calls close_port()/reopen_port()/is_blocked() from its
+API routes, and the port checks call closed_ports() to decide which button
+to show.
 """
 
 import json
 import platform
 import re
 import shlex
+import socket
 import subprocess
 from pathlib import Path
 
@@ -29,6 +33,7 @@ STATE_DIR = Path(__file__).resolve().parent.parent / ".state"
 STATE_FILE = STATE_DIR / "closed_ports.json"
 PF_ANCHOR = "com.apple/hackumbc"  # evaluated by the default `anchor "com.apple/*"` in /etc/pf.conf
 IPTABLES_TAG = "hackumbc"
+WINDOWS_RULE_PREFIX = "hackumbc-"
 
 
 class PortControlError(Exception):
@@ -61,6 +66,23 @@ def reopen_port(port):
     _save(ports - {port})
 
 
+def is_blocked(port):
+    """
+    Did the block take effect? Windows Firewall never filters connections a PC
+    makes to itself, so there we confirm the rule exists; elsewhere we check
+    that the port no longer accepts local connections.
+    """
+    if platform.system() == "Windows":
+        result = subprocess.run(
+            ["netsh", "advfirewall", "firewall", "show", "rule", f"name={WINDOWS_RULE_PREFIX}{port}"],
+            capture_output=True, text=True,
+        )
+        return result.returncode == 0
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.5)
+        return sock.connect_ex(("127.0.0.1", port)) != 0
+
+
 def _validate(port):
     if not isinstance(port, int) or not 1 <= port <= 65535:
         raise PortControlError("Invalid port number")
@@ -77,6 +99,8 @@ def _apply(all_closed, port, closing):
     system = platform.system()
     if system == "Darwin":
         _apply_pf(all_closed)
+    elif system == "Windows":
+        _apply_windows(port, closing)
     elif system == "Linux":
         _apply_iptables(port, closing)
     else:
@@ -114,6 +138,30 @@ def _pf_error(stderr):
         if not any(n in message for n in noise):
             return message.strip()
     return stderr.strip()[-300:] or "unknown error"
+
+
+def _apply_windows(port, closing):
+    name = f"{WINDOWS_RULE_PREFIX}{port}"
+    if closing:
+        args = f"advfirewall firewall add rule name={name} dir=in action=block protocol=TCP localport={port}"
+    else:
+        args = f"advfirewall firewall delete rule name={name}"
+    # Start-Process -Verb RunAs shows the UAC prompt; Win32 error 1223 means the user clicked No.
+    script = (
+        f"try {{ $p = Start-Process netsh -ArgumentList '{args}' -Verb RunAs -WindowStyle Hidden -Wait -PassThru; "
+        "exit $p.ExitCode } catch { $e = $_.Exception; "
+        "while ($e) { if ($e.NativeErrorCode -eq 1223) { exit 1223 }; $e = $e.InnerException }; "
+        "Write-Error $_; exit 1 }"
+    )
+    result = subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+        capture_output=True, text=True,
+    )
+    if result.returncode == 1223:
+        raise PortControlError("Cancelled at the Windows permission prompt")
+    if result.returncode != 0:
+        detail = result.stderr.strip().splitlines()[0] if result.stderr.strip() else f"netsh exit code {result.returncode}"
+        raise PortControlError(f"Firewall update failed: {detail}")
 
 
 def _apply_iptables(port, closing):

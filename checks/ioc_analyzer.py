@@ -14,6 +14,7 @@ in signatures.py.
 from checks.base import Check, register
 from checks.detector import count_failures_by_ip, detect_brute_force, detect_cve_ports
 from checks.log_parser import load_log_lines, parse_failed_logins
+from checks.port_control import closed_ports
 from checks.port_scan import get_open_ports
 from checks.signatures import BRUTE_FORCE_THRESHOLD, CVE_PORT_MAP
 
@@ -41,7 +42,8 @@ class IOCAnalyzerCheck(Check):
             })
 
         # Rule 2: CVE-mapped open ports
-        cve_hits = detect_cve_ports(get_open_ports(CVE_PORT_MAP.keys()))
+        # Ports this dashboard closed are firewalled even if a local scan still connects (Windows).
+        cve_hits = detect_cve_ports(get_open_ports(CVE_PORT_MAP.keys()) - closed_ports())
         for finding in cve_hits:
             items.append({
                 "label": f"Port {finding['port']}: {finding['cve']}",

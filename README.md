@@ -6,12 +6,41 @@ not by rewriting existing code.
 
 ## Run it
 
+Works on **macOS**, **Windows** and **Linux** (Python 3.10+). Run these
+from the project folder.
+
+macOS / Linux:
+
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 python app.py
 ```
 
-Then open http://127.0.0.1:5000/ — it scans on every page load.
+Windows (PowerShell):
+
+```powershell
+py -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python app.py
+```
+
+If PowerShell refuses to run `Activate.ps1`, run
+`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or skip the
+venv and just run `pip install -r requirements.txt` then `python app.py`.
+
+Then open http://127.0.0.1:5000/ — it scans on every page load. Stop it
+with Ctrl+C.
+
+### What each OS checks
+
+| | macOS | Windows | Linux |
+|---|---|---|---|
+| Listening services | `lsof` | `Get-NetTCPConnection` | `ss` |
+| Hardening | Firewall, stealth mode, FileVault, Gatekeeper, SIP | Defender Firewall, Defender antivirus, BitLocker, UAC | ufw, SSH root/password login, auto-updates |
+| Close / Reopen port | pf (password prompt) | Defender Firewall rule (UAC prompt) | iptables (needs sudo) |
 
 ## What's in it right now
 
@@ -24,14 +53,14 @@ Then open http://127.0.0.1:5000/ — it scans on every page load.
   rules, described in detail below.
 
 - **Listening Services** (`checks/listening_services.py`): lists every
-  program accepting TCP connections (via `lsof`) and flags any that
-  listen on all interfaces, i.e. are reachable from other devices on
-  the network. Without admin rights it only sees the current user's
+  program accepting TCP connections and flags any that listen on all
+  interfaces, i.e. are reachable from other devices on the network.
+  On macOS, without admin rights it only sees the current user's
   programs.
 
-- **System Hardening** (`checks/hardening.py`): reads the macOS
-  firewall, stealth mode, FileVault, Gatekeeper and SIP status (ufw on
-  Linux) and says how to turn on anything that's off.
+- **System Hardening** (`checks/hardening.py`): reads the OS's
+  built-in protections (see the table above) and says how to turn on
+  anything that's off.
 
 - **Threat summary** (`checks/summary.py`): the top of the page shows
   the total number of potential threats, a tile per check, a
@@ -40,10 +69,13 @@ Then open http://127.0.0.1:5000/ — it scans on every page load.
 
 - **Close / Reopen port buttons** (`checks/port_control.py`): open
   risky or network-exposed ports get a *Close port* button. It adds a
-  firewall rule blocking the port (macOS pf, with the normal admin
-  password prompt; iptables on Linux). The program keeps running, so
-  *Reopen port* just removes the rule. Closed ports are remembered in
+  firewall rule blocking the port after the OS's admin prompt (see the
+  table above). The program keeps running, so *Reopen port* just
+  removes the rule. Closed ports are remembered in
   `.state/closed_ports.json`. Port 5000 (the dashboard) can't be closed.
+  Windows Firewall doesn't filter connections a PC makes to itself, so
+  on Windows a closed port still answers local scans; the dashboard
+  confirms the rule exists instead, and blocks other devices.
 
 ### IOC / CVE Analyzer — detection logic
 

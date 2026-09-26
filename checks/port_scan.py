@@ -6,6 +6,7 @@ that are open, with a plain-text recommendation for each.
 """
 
 import socket
+from concurrent.futures import ThreadPoolExecutor
 
 from checks.base import Check, register
 from checks.port_control import closed_ports
@@ -38,7 +39,12 @@ def get_open_ports(ports, host="127.0.0.1"):
     ports found open. Exposed so other checks (e.g. the IOC/CVE
     analyzer) can reuse this instead of re-implementing scanning.
     """
-    return {port for port in ports if _scan_port(host, port)}
+    ports = list(ports)
+    # Scanned in parallel: on Windows a closed localhost port waits out the
+    # full timeout instead of refusing instantly.
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        results = pool.map(lambda port: _scan_port(host, port), ports)
+    return {port for port, is_open in zip(ports, results) if is_open}
 
 
 @register
@@ -51,23 +57,24 @@ class PortScanCheck(Check):
         items = []
         open_count = 0
         closed_here = closed_ports()
+        open_ports = get_open_ports(RISKY_PORTS, host)
 
         for port, (service, risk, recommendation) in RISKY_PORTS.items():
-            is_open = _scan_port(host, port)
-            if is_open:
+            if port in closed_here:
+                # Checked first: on Windows a blocked port still answers local scans.
+                items.append({
+                    "label": f"Port {port} ({service})",
+                    "status": "ok",
+                    "detail": "Closed by this dashboard (firewall rule). Reopen it if a program needs it.",
+                    "action": {"kind": "reopen", "port": port},
+                })
+            elif port in open_ports:
                 open_count += 1
                 items.append({
                     "label": f"Port {port} ({service})",
                     "status": "warning",
                     "detail": f"OPEN — {risk}. {recommendation}.",
                     "action": {"kind": "close", "port": port},
-                })
-            elif port in closed_here:
-                items.append({
-                    "label": f"Port {port} ({service})",
-                    "status": "ok",
-                    "detail": "Closed by this dashboard (firewall rule). Reopen it if a program needs it.",
-                    "action": {"kind": "reopen", "port": port},
                 })
             else:
                 items.append({
