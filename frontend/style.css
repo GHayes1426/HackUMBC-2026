@@ -294,8 +294,7 @@ main.refreshing { opacity: 0.55; transition: opacity 0.15s; pointer-events: none
   min-height: 250px;
   max-width: calc(100vw - 32px);
   max-height: calc(100vh - 32px);
-  resize: both;
-  overflow: auto;
+  overflow: visible;
   padding: 12px;
   background: var(--panel);
   border: 1px solid var(--border);
@@ -303,6 +302,7 @@ main.refreshing { opacity: 0.55; transition: opacity 0.15s; pointer-events: none
   box-shadow: 0 10px 30px rgba(0, 0, 0, .18);
 }
 .assistant-heading { display: grid; gap: 1px; margin-bottom: 8px; }
+.assistant-resize-handle { position: absolute; top: -1px; left: -1px; width: 22px; height: 22px; padding: 0; border: 0; border-top-left-radius: 11px; background: linear-gradient(135deg, var(--series) 0 35%, transparent 36%); cursor: nwse-resize; touch-action: none; }
 .assistant-heading strong { font-size: .92rem; }
 .assistant-heading span { color: var(--muted); font-size: .78rem; }
 .assistant-messages { min-height: 150px; max-height: 420px; overflow-y: auto; display: grid; gap: 7px; margin-bottom: 9px; }
@@ -341,5 +341,6 @@ main.refreshing { opacity: 0.55; transition: opacity 0.15s; pointer-events: none
   .overview, .panel { padding: 14px; }
   .bar-row { grid-template-columns: 1fr; gap: 2px; }
   .bar-track { grid-template-columns: 1fr 6.5em; }
-  .assistant-dock { bottom: 10px; right: 10px; width: calc(100vw - 20px); min-width: 0; resize: none; }
+  .assistant-dock { bottom: 10px; right: 10px; width: calc(100vw - 20px); min-width: 0; }
+  .assistant-resize-handle { display: none; }
 }

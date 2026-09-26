@@ -337,9 +337,39 @@ function setupVoiceInput() {
   });
 }
 
+function setupAssistantResize() {
+  const dock = document.querySelector(".assistant-dock");
+  const handle = document.querySelector(".assistant-resize-handle");
+  if (!dock || !handle) return;
+  handle.addEventListener("pointerdown", (event) => {
+    if (window.matchMedia("(max-width: 560px)").matches) return;
+    event.preventDefault();
+    handle.setPointerCapture(event.pointerId);
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const startWidth = dock.getBoundingClientRect().width;
+    const startHeight = dock.getBoundingClientRect().height;
+    const resize = (move) => {
+      const width = Math.max(360, Math.min(window.innerWidth - 32, startWidth - (move.clientX - startX)));
+      const height = Math.max(250, Math.min(window.innerHeight - 32, startHeight - (move.clientY - startY)));
+      dock.style.width = `${width}px`;
+      dock.style.height = `${height}px`;
+    };
+    const stop = () => {
+      handle.removeEventListener("pointermove", resize);
+      handle.removeEventListener("pointerup", stop);
+      handle.removeEventListener("pointercancel", stop);
+    };
+    handle.addEventListener("pointermove", resize);
+    handle.addEventListener("pointerup", stop);
+    handle.addEventListener("pointercancel", stop);
+  });
+}
+
 document.addEventListener("submit", (event) => {
   const assistantForm = event.target.closest("#assistant-form");
   if (assistantForm) { event.preventDefault(); askAssistant(assistantForm); }
 });
 
 setupVoiceInput();
+setupAssistantResize();
