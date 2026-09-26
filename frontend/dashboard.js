@@ -84,6 +84,65 @@ async function portAction(button) {
   toast(data.message, data.level || "success");
 }
 
+async function saveDetectionSettings(form) {
+  const values = Object.fromEntries(new FormData(form));
+  const payload = Object.fromEntries(Object.entries(values).map(([name, value]) => [name, Number(value)]));
+  const button = form.querySelector("button[type=submit]");
+  button.disabled = true;
+  try {
+    const response = await fetch("/api/settings/detection", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Dashboard": "1" },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "Couldn't save thresholds");
+    await refresh();
+    toast("Detection thresholds saved and scan refreshed.", "success");
+  } catch (err) {
+    toast(err.message, "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function saveLogSource(select) {
+  select.disabled = true;
+  try {
+    const response = await fetch("/api/settings/log-source", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Dashboard": "1" },
+      body: JSON.stringify({ source: select.value }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "Couldn't change log source");
+    await refresh();
+    toast("Log source changed and scan refreshed.", "success");
+  } catch (err) {
+    toast(err.message, "error");
+  } finally {
+    select.disabled = false;
+  }
+}
+
+async function uploadLog(form) {
+  const button = form.querySelector("button[type=submit]");
+  button.disabled = true;
+  try {
+    const response = await fetch("/api/logs/upload", {
+      method: "POST", headers: { "X-Dashboard": "1" }, body: new FormData(form),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "Couldn't upload log");
+    await refresh();
+    toast(`${data.name} is selected and being analyzed.`, "success");
+  } catch (err) {
+    toast(err.message, "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
 document.addEventListener("click", (event) => {
   const button = event.target.closest(".port-action");
   if (button) {
@@ -96,4 +155,16 @@ document.addEventListener("click", (event) => {
       .then(() => toast("Rescan complete.", "success"))
       .catch((err) => toast(err.message, "error"));
   }
+});
+
+document.addEventListener("submit", (event) => {
+  const form = event.target.closest("#detection-settings");
+  if (form) { event.preventDefault(); saveDetectionSettings(form); return; }
+  const upload = event.target.closest("#log-upload");
+  if (upload) { event.preventDefault(); uploadLog(upload); }
+});
+
+document.addEventListener("change", (event) => {
+  const select = event.target.closest("#log-source");
+  if (select) saveLogSource(select);
 });

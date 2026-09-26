@@ -1,4 +1,4 @@
-# Network Security Dashboard
+# Port a Potty
 
 A local port assessor with a plugin-style dashboard: each security
 check is a self-contained module, so the app grows by adding files,
@@ -14,7 +14,7 @@ macOS / Linux:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -e .
 python app.py
 ```
 
@@ -22,9 +22,8 @@ Windows (PowerShell):
 
 ```powershell
 py -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-python app.py
+.\.venv\Scripts\python -m pip install -e .
+.\.venv\Scripts\python app.py
 ```
 
 If PowerShell refuses to run `Activate.ps1`, run
@@ -59,6 +58,17 @@ also supplies the plain-English description of what each one does. To
 teach the dashboard a new app, add one line to `PROGRAMS` there.
 Checks report these as the item statuses `warning`, `review`, `info`,
 `ok` and `error` (see `checks/base.py`).
+
+The **Detection thresholds** panel saves its values to the ignored local
+file `.state/detection_settings.json`; each machine can use its own alert
+thresholds without changing the team repository.
+
+### Static demo log source
+
+The dashboard reads only bundled, simulated SSH logs. Choose a scenario in
+the **Demo scenario** picker to demonstrate combined attacks, brute force,
+password spraying, or clean activity. No VM or live system-log access is
+required.
 
 ## What's in it right now
 

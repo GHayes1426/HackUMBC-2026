@@ -20,19 +20,57 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Network Security Dashboard</title>
+  <title>Port a Potty</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <script src="{{ url_for('static', filename='dashboard.js') }}" defer></script>
 </head>
 <body>
   <header>
-    <h1>Network Security Dashboard</h1>
+    <h1>Port a Potty</h1>
     <p>Assessing <code>127.0.0.1</code> &middot; <a href="{{ url_for('dashboard') }}" id="rescan">Rescan</a></p>
   </header>
 
   <div id="toasts" class="toasts" aria-live="polite"></div>
 
   <main id="dashboard">
+
+    <section class="settings-panel" aria-labelledby="settings-title">
+      <h2 id="settings-title">Detection thresholds</h2>
+      <p class="description">Tune how many failed logins trigger an alert. Changes apply to the next scan on this device.</p>
+      <label class="scenario-picker">Log source
+        <select id="log-source">
+          {% for source, title in log_sources %}
+          <option value="{{ source }}"{{ " selected" if source == selected_log_source }}>{{ title }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <form id="log-upload" class="upload-form" enctype="multipart/form-data">
+        <label>Upload a log file <input name="log_file" type="file" accept=".log,.txt,text/plain" required></label>
+        <button type="submit" class="save-settings">Upload and analyze</button>
+        <span class="muted">UTF-8 .log or .txt, up to 512 KB. The newest 8 uploads are kept locally.</span>
+      </form>
+      <form id="detection-settings" class="settings-form">
+        <label>Brute-force failures
+          <input name="brute_force_failures" type="number" min="1" required value="{{ detection_settings.brute_force_failures }}">
+        </label>
+        <label>Brute-force window (seconds)
+          <input name="brute_force_window_seconds" type="number" min="1" required value="{{ detection_settings.brute_force_window_seconds }}">
+        </label>
+        <label>Password-spray accounts
+          <input name="password_spray_accounts" type="number" min="1" required value="{{ detection_settings.password_spray_accounts }}">
+        </label>
+        <label>Password-spray window (seconds)
+          <input name="password_spray_window_seconds" type="number" min="1" required value="{{ detection_settings.password_spray_window_seconds }}">
+        </label>
+        <label>Maximum attempts per sprayed account
+          <input name="password_spray_max_attempts_per_account" type="number" min="1" required value="{{ detection_settings.password_spray_max_attempts_per_account }}">
+        </label>
+        <label>Alert cooldown (seconds)
+          <input name="alert_cooldown_seconds" type="number" min="1" required value="{{ detection_settings.alert_cooldown_seconds }}">
+        </label>
+        <button type="submit" class="save-settings">Save thresholds</button>
+      </form>
+    </section>
 
     <section class="overview" aria-labelledby="overview-title">
       <h2 id="overview-title">Threat summary</h2>
