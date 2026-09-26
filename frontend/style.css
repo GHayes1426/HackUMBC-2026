@@ -295,6 +295,8 @@ main.refreshing { opacity: 0.55; transition: opacity 0.15s; pointer-events: none
   max-width: calc(100vw - 32px);
   max-height: calc(100vh - 32px);
   overflow: visible;
+  display: flex;
+  flex-direction: column;
   padding: 12px;
   background: var(--panel);
   border: 1px solid var(--border);
@@ -306,18 +308,19 @@ main.refreshing { opacity: 0.55; transition: opacity 0.15s; pointer-events: none
 .assistant-heading strong { font-size: .92rem; }
 .assistant-heading span { color: var(--muted); font-size: .78rem; }
 .assistant-heading .assistant-voice-status { color: var(--series); }
-.assistant-messages { min-height: 150px; max-height: 420px; overflow-y: auto; display: grid; gap: 7px; margin-bottom: 9px; }
+.assistant-messages { flex: 1 1 auto; min-height: 150px; overflow-y: auto; display: grid; gap: 7px; margin-bottom: 9px; }
 .assistant-message { margin: 0; padding: 7px 9px; border-radius: 8px; background: var(--track); font-size: .86rem; white-space: pre-wrap; }
 .assistant-message.user { justify-self: end; background: color-mix(in srgb, var(--series) 16%, var(--panel)); }
 .assistant-message.error { border-left: 3px solid var(--warning); }
 .assistant-message.pending { display: flex; align-items: center; gap: 8px; color: var(--muted); font-style: italic; }
 .assistant-message.pending::before { content: ""; width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--series); border-radius: 50%; animation: assistant-spin .75s linear infinite; }
 @keyframes assistant-spin { to { transform: rotate(360deg); } }
-.assistant-form { display: grid; grid-template-columns: 1fr auto; gap: 7px; }
+.assistant-form { flex: 0 0 auto; display: grid; grid-template-columns: 1fr auto; gap: 7px; }
 .assistant-form input { min-width: 0; padding: 8px; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 6px; font: inherit; }
 .assistant-form button { padding: 8px 10px; border: 0; border-radius: 6px; color: #fff; background: var(--series); font: inherit; font-weight: 600; cursor: pointer; }
 .assistant-form button:disabled { cursor: not-allowed; opacity: .6; }
 .assistant-talk { grid-column: 1 / -1; background: var(--text) !important; }
+.assistant-stop-voice { grid-column: 1 / -1; background: var(--warning) !important; }
 
 .port-action {
   font: inherit;

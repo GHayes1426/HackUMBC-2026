@@ -9,6 +9,18 @@
 // they're seen wherever the user has scrolled to.
 
 const ICONS = { success: "✓", info: "…", warning: "!", error: "×" };
+let activeAssistantAudio;
+
+function stopAssistantVoice() {
+  if (activeAssistantAudio) {
+    activeAssistantAudio.pause();
+    URL.revokeObjectURL(activeAssistantAudio.src);
+    activeAssistantAudio = undefined;
+  }
+  if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+  const stop = document.getElementById("assistant-stop-voice");
+  if (stop) stop.disabled = true;
+}
 
 function toast(message, level = "info") {
   const el = document.createElement("div");
@@ -144,6 +156,10 @@ async function uploadLog(form) {
 }
 
 document.addEventListener("click", (event) => {
+  if (event.target.closest("#assistant-stop-voice")) {
+    stopAssistantVoice();
+    return;
+  }
   const button = event.target.closest(".port-action");
   if (button) {
     portAction(button);
@@ -182,6 +198,7 @@ function addAssistantMessage(text, role = "assistant") {
 
 async function speakAssistantAnswer(text) {
   if (!window.portAPottyVoiceEnabled) return;
+  stopAssistantVoice();
   try {
     const response = await fetch("/api/assistant/speak", {
       method: "POST",
@@ -189,16 +206,14 @@ async function speakAssistantAnswer(text) {
       body: JSON.stringify({ text }),
     });
     if (!response.ok) throw new Error("ElevenLabs voice unavailable");
-    const audio = new Audio(URL.createObjectURL(await response.blob()));
-    audio.addEventListener("ended", () => URL.revokeObjectURL(audio.src), { once: true });
-    await audio.play();
+    activeAssistantAudio = new Audio(URL.createObjectURL(await response.blob()));
+    const stop = document.getElementById("assistant-stop-voice");
+    if (stop) stop.disabled = false;
+    activeAssistantAudio.addEventListener("ended", stopAssistantVoice, { once: true });
+    await activeAssistantAudio.play();
   } catch {
-    // The browser voice keeps the conversation usable if the TTS quota is gone.
-    if (!("speechSynthesis" in window)) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "en-US";
-    window.speechSynthesis.speak(utterance);
+    stopAssistantVoice();
+    toast("ElevenLabs voice is unavailable. The response is available as text.", "error");
   }
 }
 
