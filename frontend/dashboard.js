@@ -344,9 +344,16 @@ function setupVoiceInput() {
       button.textContent = "Recording… click to stop";
       button.setAttribute("aria-pressed", "true");
     } catch (err) {
-      const denied = err?.name === "NotAllowedError" || err?.name === "SecurityError";
-      setVoiceStatus(denied ? "Microphone blocked. Allow it in this site’s browser permissions, then retry." : "Microphone is unavailable in this browser.", "blocked");
-      toast("Microphone permission was denied or unavailable. Allow microphone access in this browser, then try again.", "error");
+      const reason = err?.name || "UnknownError";
+      const denied = reason === "NotAllowedError" || reason === "SecurityError";
+      const missing = reason === "NotFoundError";
+      const message = denied
+        ? "Microphone is blocked by Edge or Windows. Enable it in browser and Windows microphone permissions."
+        : missing
+          ? "No microphone device was detected. Connect or select a microphone in Windows, then retry."
+          : `Microphone request failed (${reason}). Check that Edge has microphone access.`;
+      setVoiceStatus(message, "blocked");
+      toast(message, "error");
       resetButton();
     }
   }
