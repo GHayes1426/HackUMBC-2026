@@ -91,6 +91,12 @@ run commands, close ports, or change any local settings.
 The helper uploads once a minute by default. It can be tested from the repo
 with `python port_a_potty_helper.py --once`.
 
+If Vercel Deployment Protection is enabled, an EXE cannot use the browser's
+Vercel sign-in cookie. Either allow public access for the deployment or create
+a Vercel Protection Bypass secret and place it in the helper-side `.env` as
+`PORT_A_POTTY_VERCEL_BYPASS_SECRET`. Keep that secret out of Git and out of
+the hosted app's environment variables.
+
 ## What's in it right now
 
 - **Local Port Assessor** (`checks/port_scan.py`): scans localhost

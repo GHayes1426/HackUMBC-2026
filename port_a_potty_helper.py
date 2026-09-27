@@ -69,6 +69,7 @@ def upload_scan() -> str:
     load_configuration()
     base_url = os.environ.get("PORT_A_POTTY_API_URL", "").strip().rstrip("/")
     api_key = os.environ.get("PORT_A_POTTY_AGENT_KEY", "").strip()
+    vercel_bypass = os.environ.get("PORT_A_POTTY_VERCEL_BYPASS_SECRET", "").strip()
     pairing_id = device_id()
     if not base_url or not api_key:
         raise RuntimeError(
@@ -80,10 +81,15 @@ def upload_scan() -> str:
         "results": local_results(),
     }).encode("utf-8")
     try:
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+        if vercel_bypass:
+            # Supports Vercel Deployment Protection without putting a browser
+            # cookie or the bypass value into the hosted page.
+            headers["x-vercel-protection-bypass"] = vercel_bypass
         http_request = request.Request(
             f"{base_url}/api/agent/scan",
             data=payload,
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+            headers=headers,
             method="POST",
         )
         with request.urlopen(http_request, timeout=25) as response:
