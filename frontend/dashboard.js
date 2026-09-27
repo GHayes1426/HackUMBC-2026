@@ -69,6 +69,7 @@ async function refresh() {
     if (!response.ok) throw new Error(`Rescan failed (${response.status})`);
     const page = new DOMParser().parseFromString(await response.text(), "text/html");
     main.replaceChildren(...page.getElementById("dashboard").childNodes);
+    window.portAPottyRefreshHelper?.();
   } finally {
     main.classList.remove("refreshing");
   }
@@ -485,9 +486,11 @@ function setupLocalHelper() {
   const refreshButton = document.getElementById("agent-refresh");
   const downloadButton = document.getElementById("agent-download");
   const status = document.getElementById("agent-status");
-  const primaryContainer = document.getElementById("agent-results-primary");
-  const secondaryContainer = document.getElementById("agent-results-secondary");
-  if (!form || !input || !refreshButton || !downloadButton || !status || !primaryContainer || !secondaryContainer) return;
+  if (!form || !input || !refreshButton || !downloadButton || !status) return;
+  const containers = () => ({
+    primary: document.getElementById("agent-results-primary"),
+    secondary: document.getElementById("agent-results-secondary"),
+  });
 
   input.value = localStorage.getItem(AGENT_PAIRING_STORAGE_KEY) || "";
   const setStatus = (message) => { status.textContent = message; };
@@ -503,8 +506,10 @@ function setupLocalHelper() {
     return tag;
   };
   const render = (scan) => {
-    primaryContainer.replaceChildren();
-    secondaryContainer.replaceChildren();
+    const { primary, secondary } = containers();
+    if (!primary || !secondary) return;
+    primary.replaceChildren();
+    secondary.replaceChildren();
     const observed = new Date(scan.observed_at);
     setStatus(`Latest scan from ${scan.hostname} at ${Number.isNaN(observed.valueOf()) ? "an unknown time" : observed.toLocaleString()}.`);
     const order = ["Local Port Assessor", "Listening Services", "System Hardening"];
@@ -543,7 +548,7 @@ function setupLocalHelper() {
       card.append(head, description, summary, list);
       // Match the local dashboard's order: port and listening panels sit
       // before IOC/CVE, while the hardening panel follows it.
-      (result.name === "System Hardening" ? secondaryContainer : primaryContainer).append(card);
+      (result.name === "System Hardening" ? secondary : primary).append(card);
     }
   };
   const load = async () => {
@@ -551,8 +556,9 @@ function setupLocalHelper() {
     const packageId = localStorage.getItem(AGENT_PACKAGE_STORAGE_KEY);
     if (!deviceId && !packageId) {
       setStatus("Download the ready-to-run helper, or paste a pairing ID from an existing helper.");
-      primaryContainer.replaceChildren();
-      secondaryContainer.replaceChildren();
+      const { primary, secondary } = containers();
+      primary?.replaceChildren();
+      secondary?.replaceChildren();
       return;
     }
     refreshButton.disabled = true;
@@ -568,8 +574,9 @@ function setupLocalHelper() {
       localStorage.setItem(AGENT_PAIRING_STORAGE_KEY, deviceId);
       render(data);
     } catch (err) {
-      primaryContainer.replaceChildren();
-      secondaryContainer.replaceChildren();
+      const { primary, secondary } = containers();
+      primary?.replaceChildren();
+      secondary?.replaceChildren();
       setStatus(err.message || "Could not load the local helper scan.");
     } finally {
       refreshButton.disabled = false;
@@ -612,6 +619,7 @@ function setupLocalHelper() {
       downloadButton.textContent = "Download ready-to-run Windows helper";
     }
   });
+  window.portAPottyRefreshHelper = load;
   if (input.value || localStorage.getItem(AGENT_PACKAGE_STORAGE_KEY)) load();
 }
 

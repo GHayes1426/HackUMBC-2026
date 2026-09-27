@@ -50,8 +50,6 @@
     <p id="agent-status" class="agent-status" role="status">Download the helper to connect automatically, or paste an existing helper pairing ID.</p>
   </section>
 
-  <div id="agent-results-primary" class="agent-results" aria-live="polite"></div>
-
   <main id="dashboard">
 
     <section class="settings-panel" aria-labelledby="settings-title">
@@ -152,6 +150,8 @@
       </div>
     </section>
 
+    <div id="agent-results-primary" class="agent-results" aria-live="polite"></div>
+
     {% for check in results %}
     <section class="panel status-{{ check.status }}">
       <div class="panel-head">
@@ -181,9 +181,9 @@
     {% else %}
     <p>No checks registered. Import one in <code>checks/__init__.py</code>.</p>
     {% endfor %}
-  </main>
 
-  <div id="agent-results-secondary" class="agent-results" aria-live="polite"></div>
+    <div id="agent-results-secondary" class="agent-results" aria-live="polite"></div>
+  </main>
 
   <aside class="assistant-dock" aria-label="Port a Potty assistant">
     <button type="button" class="assistant-resize-handle" aria-label="Resize assistant window" title="Drag to resize"></button>
