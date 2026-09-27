@@ -36,24 +36,33 @@
     <div class="panel-head">
       <h2 id="agent-title">Local device helper</h2>
       <span class="tag"><span class="tag-icon" aria-hidden="true">↗</span>OPTIONAL</span>
+      <div class="helper-panel-actions">
+        <button type="button" id="agent-refresh" class="agent-refresh">Refresh local scan</button>
+        <button type="button" id="agent-toggle" class="agent-toggle" aria-expanded="true">Collapse setup</button>
+      </div>
     </div>
-    <p class="description">Run the downloadable helper on a computer to show its local Port Assessor, Listening Services, and System Hardening results here.</p>
-    <button type="button" id="agent-download" class="save-settings agent-download">Download ready-to-run Windows helper</button>
-    <p class="muted agent-download-note">Downloads a ZIP containing the EXE and its device-scoped connection file. Extract it, then double-click the EXE.</p>
-    <form id="agent-pairing" class="agent-pairing">
-      <label>Manual helper pairing ID
-        <input id="agent-device-id" name="device_id" maxlength="128" autocomplete="off" placeholder="Paste the ID printed by Port a Potty Helper" aria-describedby="agent-status">
-      </label>
-      <button type="submit" class="save-settings">Connect helper</button>
-      <button type="button" id="agent-refresh" class="agent-refresh">Refresh local scan</button>
-    </form>
-    <p id="agent-status" class="agent-status" role="status">Download the helper to connect automatically, or paste an existing helper pairing ID.</p>
+    <div class="agent-setup-body">
+      <p class="description">Run the downloadable helper on a computer to show its local Port Assessor, Listening Services, and System Hardening results here.</p>
+      <button type="button" id="agent-download" class="save-settings agent-download">Download ready-to-run Windows helper</button>
+      <p class="muted agent-download-note">Downloads a ZIP containing the EXE and its device-scoped connection file. Extract it, then double-click the EXE.</p>
+      <form id="agent-pairing" class="agent-pairing">
+        <label>Manual helper pairing ID
+          <input id="agent-device-id" name="device_id" maxlength="128" autocomplete="off" placeholder="Paste the ID printed by Port a Potty Helper" aria-describedby="agent-status">
+        </label>
+        <button type="submit" class="save-settings">Connect helper</button>
+      </form>
+      <p id="agent-status" class="agent-status" role="status">Download the helper to connect automatically, or paste an existing helper pairing ID.</p>
+    </div>
   </section>
 
   <main id="dashboard">
 
-    <section class="settings-panel" aria-labelledby="settings-title">
-      <h2 id="settings-title">Detection thresholds</h2>
+    <details class="settings-panel" open>
+      <summary id="settings-title">
+        <span><strong>Detection thresholds</strong><span class="settings-summary-copy">Tune alert sensitivity and choose a simulated or uploaded log.</span></span>
+        <span class="settings-summary-toggle" aria-hidden="true">Expand</span>
+      </summary>
+      <div class="settings-content">
       <p class="description">Tune how many failed logins trigger an alert. Changes apply to the next scan on this device.</p>
       <label class="scenario-picker">Log source
         <select id="log-source">
@@ -88,7 +97,8 @@
         </label>
         <button type="submit" class="save-settings">Save thresholds</button>
       </form>
-    </section>
+      </div>
+    </details>
 
     <section class="overview" aria-labelledby="overview-title">
       <h2 id="overview-title">Threat summary</h2>

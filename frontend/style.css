@@ -73,7 +73,15 @@ a { color: inherit; }
   padding: 16px 20px;
   margin-bottom: 20px;
 }
-.settings-panel h2 { margin: 0; font-size: 1.15rem; }
+.settings-panel summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; list-style: none; }
+.settings-panel summary::-webkit-details-marker { display: none; }
+.settings-panel summary strong { display: block; font-size: 1.15rem; }
+.settings-summary-copy { display: block; margin-top: 2px; color: var(--muted); font-size: .9rem; font-weight: 400; }
+.settings-summary-toggle { color: var(--series); font-size: .85rem; font-weight: 650; }
+.settings-panel[open] .settings-summary-toggle::after { content: "Collapse"; }
+.settings-panel[open] .settings-summary-toggle { font-size: 0; }
+.settings-panel[open] .settings-summary-toggle::after { font-size: .85rem; }
+.settings-content { margin-top: 12px; }
 .agent-panel {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -84,6 +92,9 @@ a { color: inherit; }
 }
 .agent-panel h2 { margin: 0; font-size: 1.15rem; }
 .agent-pairing { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+.helper-panel-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.agent-toggle { padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }
+.agent-panel.is-collapsed .agent-setup-body { display: none; }
 .agent-download { margin-top: 10px; }
 .agent-download-note { margin: 6px 0 0; font-size: .85rem; }
 .agent-pairing label { display: grid; gap: 4px; min-width: min(100%, 360px); color: var(--muted); font-size: .9rem; }

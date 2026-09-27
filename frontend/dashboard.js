@@ -15,6 +15,7 @@ let activeAssistantAudio;
 let assistantSpeechGenerating = false;
 const AGENT_PAIRING_STORAGE_KEY = "portAPottyAgentDeviceId";
 const AGENT_PACKAGE_STORAGE_KEY = "portAPottyAgentPackageId";
+const AGENT_COLLAPSED_STORAGE_KEY = "portAPottyAgentSetupCollapsed";
 
 function setReadAloudButtonsDisabled(disabled, label = "Read aloud with ElevenLabs") {
   document.querySelectorAll(".assistant-read-answer").forEach((button) => {
@@ -484,15 +485,24 @@ function setupLocalHelper() {
   const form = document.getElementById("agent-pairing");
   const input = document.getElementById("agent-device-id");
   const refreshButton = document.getElementById("agent-refresh");
+  const toggleButton = document.getElementById("agent-toggle");
+  const panel = document.getElementById("agent-panel");
   const downloadButton = document.getElementById("agent-download");
   const status = document.getElementById("agent-status");
-  if (!form || !input || !refreshButton || !downloadButton || !status) return;
+  if (!form || !input || !refreshButton || !downloadButton || !toggleButton || !panel || !status) return;
   const containers = () => ({
     primary: document.getElementById("agent-results-primary"),
     secondary: document.getElementById("agent-results-secondary"),
   });
 
   input.value = localStorage.getItem(AGENT_PAIRING_STORAGE_KEY) || "";
+  const setCollapsed = (collapsed, persist = true) => {
+    panel.classList.toggle("is-collapsed", collapsed);
+    toggleButton.setAttribute("aria-expanded", String(!collapsed));
+    toggleButton.textContent = collapsed ? "Expand setup" : "Collapse setup";
+    if (persist) localStorage.setItem(AGENT_COLLAPSED_STORAGE_KEY, String(collapsed));
+  };
+  setCollapsed(localStorage.getItem(AGENT_COLLAPSED_STORAGE_KEY) === "true", false);
   const setStatus = (message) => { status.textContent = message; };
   const statusTag = (level) => {
     const safeLevel = STATUS_TAGS[level] ? level : "error";
@@ -512,6 +522,7 @@ function setupLocalHelper() {
     secondary.replaceChildren();
     const observed = new Date(scan.observed_at);
     setStatus(`Latest scan from ${scan.hostname} at ${Number.isNaN(observed.valueOf()) ? "an unknown time" : observed.toLocaleString()}.`);
+    setCollapsed(true);
     const order = ["Local Port Assessor", "Listening Services", "System Hardening"];
     const results = [...(scan.results || [])].sort((left, right) => order.indexOf(left.name) - order.indexOf(right.name));
     for (const result of results) {
@@ -585,6 +596,7 @@ function setupLocalHelper() {
   };
   form.addEventListener("submit", (event) => { event.preventDefault(); load(); });
   refreshButton.addEventListener("click", load);
+  toggleButton.addEventListener("click", () => setCollapsed(!panel.classList.contains("is-collapsed")));
   downloadButton.addEventListener("click", async () => {
     downloadButton.disabled = true;
     downloadButton.textContent = "Preparing download…";
