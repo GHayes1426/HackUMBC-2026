@@ -234,6 +234,9 @@ class SummaryAndListeningTests(unittest.TestCase):
                  + [{"label": "Port 9999", "status": "review", "detail": ""}])
         shown, hidden = _display_items({"name": "Listening Services", "items": items})
         self.assertEqual((len(shown), hidden), (10, 11))
+        grouped, _ = _display_items({"name": "Listening Services", "items": [
+            {"label": f"Port {n} · GlideXService", "status": "review", "detail": ""} for n in (49672, 49673)]})
+        self.assertEqual([item["label"] for item in grouped], ["Ports 49672, 49673 · GlideXService"])
         self.assertEqual(shown[0]["label"], "Port 9999")
         shown, hidden = _display_items({"name": "Local Port Assessor", "items": items})
         self.assertEqual((len(shown), hidden), (21, 0))

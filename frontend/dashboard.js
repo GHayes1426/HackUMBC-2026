@@ -769,12 +769,24 @@ function setupLocalHelper() {
       const list = document.createElement("ul");
       list.className = "agent-result-list";
       // Like the local dashboard, Listening Services shows only its 10 most important ports.
+      // One program on several ports is shown once ("Ports 902, 912 · vmware-authd").
       let items = result.items || [];
       let hiddenCount = 0;
-      if (result.name === "Listening Services" && items.length > LISTENING_LIMIT) {
+      if (result.name === "Listening Services") {
+        const groups = new Map();
+        for (const item of items) {
+          const match = /^Port (\d+) · (.*)$/.exec(item.label || "");
+          const key = match ? `${item.status}|${match[2]}` : `${item.status}|${item.label}`;
+          const group = groups.get(key);
+          if (group && match) group.ports.push(match[1]);
+          else groups.set(key, { ...item, ports: match ? [match[1]] : [], name: match ? match[2] : "" });
+        }
+        items = [...groups.values()].map((group) => (group.ports.length > 1
+          ? { ...group, label: `Ports ${group.ports.join(", ")} · ${group.name}` } : group));
         const rank = { warning: 0, review: 1, info: 3, ok: 4 };
-        items = [...items].sort((a, b) => (rank[a.status] ?? 5) - (rank[b.status] ?? 5)).slice(0, LISTENING_LIMIT);
-        hiddenCount = result.items.length - LISTENING_LIMIT;
+        const ranked = [...items].sort((a, b) => (rank[a.status] ?? 5) - (rank[b.status] ?? 5));
+        hiddenCount = Math.max(0, ranked.length - LISTENING_LIMIT);
+        items = ranked.slice(0, LISTENING_LIMIT);
       }
       for (const item of items) {
         const itemLevel = STATUS_TAGS[item.status] ? item.status : "error";
@@ -796,7 +808,7 @@ function setupLocalHelper() {
       if (hiddenCount) {
         const more = document.createElement("p");
         more.className = "note more-note";
-        more.textContent = `Showing the ${items.length} most important of ${items.length + hiddenCount} listening ports. Ask the assistant about any other port.`;
+        more.textContent = `Showing the ${items.length} most important of ${items.length + hiddenCount} listening programs. Ask the assistant about any other port.`;
         card.append(more);
       }
       // Match the local dashboard's order: port and listening panels sit

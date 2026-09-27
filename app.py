@@ -284,7 +284,23 @@ def _summary_tiles(results: list[dict]) -> list[dict]:
 def _display_items(check: dict) -> tuple[list[dict], int]:
     """Items to show, and how many are hidden: Listening Services shows its 10 most important ports."""
     items = check["items"]
-    if check["name"] != "Listening Services" or len(items) <= LISTENING_LIMIT:
+    if check["name"] != "Listening Services":
+        return items, 0
+    # One program on several ports is shown once ("Ports 902, 912 · vmware-authd").
+    groups: dict[tuple, dict] = {}
+    for item in items:
+        match = re.match(r"Port (\d+) · (.*)$", item["label"])
+        if not match or item.get("action"):
+            groups[(id(item),)] = item
+            continue
+        key = (item["status"], match[2])
+        if key in groups:
+            groups[key]["ports"].append(match[1])
+            groups[key]["label"] = f"Ports {', '.join(groups[key]['ports'])} · {match[2]}"
+        else:
+            groups[key] = {**item, "ports": [match[1]]}
+    items = list(groups.values())
+    if len(items) <= LISTENING_LIMIT:
         return items, 0
 
     def rank(item):
