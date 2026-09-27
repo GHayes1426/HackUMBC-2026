@@ -73,15 +73,10 @@ a { color: inherit; }
   padding: 16px 20px;
   margin-bottom: 20px;
 }
-.settings-panel summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; list-style: none; }
-.settings-panel summary::-webkit-details-marker { display: none; }
-.settings-panel summary strong { display: block; font-size: 1.15rem; }
+.settings-panel h2 { margin: 0; font-size: 1.15rem; }
 .settings-summary-copy { display: block; margin-top: 2px; color: var(--muted); font-size: .9rem; font-weight: 400; }
-.settings-summary-toggle { color: var(--series); font-size: .85rem; font-weight: 650; }
-.settings-panel[open] .settings-summary-toggle::after { content: "Collapse"; }
-.settings-panel[open] .settings-summary-toggle { font-size: 0; }
-.settings-panel[open] .settings-summary-toggle::after { font-size: .85rem; }
 .settings-content { margin-top: 12px; }
+.settings-panel.is-collapsed .settings-content { display: none; }
 .agent-panel {
   background: var(--panel);
   border: 1px solid var(--border);

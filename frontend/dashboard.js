@@ -16,6 +16,7 @@ let assistantSpeechGenerating = false;
 const AGENT_PAIRING_STORAGE_KEY = "portAPottyAgentDeviceId";
 const AGENT_PACKAGE_STORAGE_KEY = "portAPottyAgentPackageId";
 const AGENT_COLLAPSED_STORAGE_KEY = "portAPottyAgentSetupCollapsed";
+const DETECTION_COLLAPSED_STORAGE_KEY = "portAPottyDetectionThresholdsCollapsed";
 
 function setReadAloudButtonsDisabled(disabled, label = "Read aloud with ElevenLabs") {
   document.querySelectorAll(".assistant-read-answer").forEach((button) => {
@@ -70,6 +71,7 @@ async function refresh() {
     if (!response.ok) throw new Error(`Rescan failed (${response.status})`);
     const page = new DOMParser().parseFromString(await response.text(), "text/html");
     main.replaceChildren(...page.getElementById("dashboard").childNodes);
+    setupDetectionCollapse();
     window.portAPottyRefreshHelper?.();
   } finally {
     main.classList.remove("refreshing");
@@ -635,6 +637,20 @@ function setupLocalHelper() {
   if (input.value || localStorage.getItem(AGENT_PACKAGE_STORAGE_KEY)) load();
 }
 
+function setupDetectionCollapse() {
+  const panel = document.getElementById("detection-panel");
+  const button = document.getElementById("detection-toggle");
+  if (!panel || !button) return;
+  const setCollapsed = (collapsed, persist = true) => {
+    panel.classList.toggle("is-collapsed", collapsed);
+    button.setAttribute("aria-expanded", String(!collapsed));
+    button.textContent = collapsed ? "Expand thresholds" : "Collapse thresholds";
+    if (persist) localStorage.setItem(DETECTION_COLLAPSED_STORAGE_KEY, String(collapsed));
+  };
+  setCollapsed(localStorage.getItem(DETECTION_COLLAPSED_STORAGE_KEY) === "true", false);
+  button.addEventListener("click", () => setCollapsed(!panel.classList.contains("is-collapsed")));
+}
+
 document.addEventListener("submit", (event) => {
   const assistantForm = event.target.closest("#assistant-form");
   if (assistantForm) { event.preventDefault(); askAssistant(assistantForm); }
@@ -643,3 +659,4 @@ document.addEventListener("submit", (event) => {
 setupVoiceInput();
 setupAssistantResize();
 setupLocalHelper();
+setupDetectionCollapse();

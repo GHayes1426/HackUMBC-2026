@@ -57,11 +57,14 @@
 
   <main id="dashboard">
 
-    <details class="settings-panel" open>
-      <summary id="settings-title">
-        <span><strong>Detection thresholds</strong><span class="settings-summary-copy">Tune alert sensitivity and choose a simulated or uploaded log.</span></span>
-        <span class="settings-summary-toggle" aria-hidden="true">Expand</span>
-      </summary>
+    <section class="settings-panel" id="detection-panel" aria-labelledby="settings-title">
+      <div class="panel-head">
+        <div>
+          <h2 id="settings-title">Detection thresholds</h2>
+          <span class="settings-summary-copy">Tune alert sensitivity and choose a simulated or uploaded log.</span>
+        </div>
+        <button type="button" id="detection-toggle" class="agent-toggle" aria-expanded="true">Collapse thresholds</button>
+      </div>
       <div class="settings-content">
       <p class="description">Tune how many failed logins trigger an alert. Changes apply to the next scan on this device.</p>
       <label class="scenario-picker">Log source
@@ -98,7 +101,7 @@
         <button type="submit" class="save-settings">Save thresholds</button>
       </form>
       </div>
-    </details>
+    </section>
 
     <section class="overview" aria-labelledby="overview-title">
       <h2 id="overview-title">Threat summary</h2>
