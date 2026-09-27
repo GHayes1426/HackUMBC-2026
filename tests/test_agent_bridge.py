@@ -81,6 +81,21 @@ class LocalHelperBridgeTests(unittest.TestCase):
         self.assertNotIn("GEMINI", config)
         self.assertNotIn("ELEVENLABS", config)
 
+    @patch("app.create_agent_enrollment", return_value=True)
+    def test_macos_download_uses_executable_command_file(self, enrollment):
+        with TemporaryDirectory() as directory:
+            helper = Path(directory) / "Port-a-Potty-Helper.command"
+            helper.write_text("#!/bin/zsh\necho helper\n", encoding="utf-8")
+            with patch("app.HOSTED_MODE", True), patch("app.HELPER_MACOS_COMMAND", helper):
+                response = self.client.post(
+                    "/api/agent/package", json={"platform": "macos"}, headers={"X-Dashboard": "1"}
+                )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("macOS", response.headers["Content-Disposition"])
+        with ZipFile(BytesIO(response.data)) as archive:
+            info = archive.getinfo("Port-a-Potty-Helper.command")
+            self.assertEqual((info.external_attr >> 16) & 0o777, 0o755)
+
 
 if __name__ == "__main__":
     unittest.main()

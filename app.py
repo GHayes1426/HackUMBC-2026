@@ -29,7 +29,7 @@ from pathlib import Path
 from urllib import parse, request as urlrequest
 from urllib.error import HTTPError
 from uuid import uuid4
-from zipfile import ZIP_DEFLATED, ZipFile
+from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from flask import Flask, Response, abort, jsonify, render_template, request
 
@@ -74,6 +74,7 @@ HELPER_PACKAGE_LIMIT = 5
 _helper_package_requests: dict[str, deque[float]] = defaultdict(deque)
 _helper_package_lock = Lock()
 HELPER_EXE = Path(__file__).resolve().parent / "helper_package" / "Port-a-Potty-Helper.exe"
+HELPER_MACOS_COMMAND = Path(__file__).resolve().parent / "helper_package" / "Port-a-Potty-Helper.command"
 
 
 def _settings_request_allowed() -> bool:
@@ -257,6 +258,17 @@ def agent_scan_upload():
     if not os.environ.get("PORT_A_POTTY_AGENT_KEY"):
         return jsonify(error="The local helper has not been configured on this deployment."), 503
     payload = request.get_json(silent=True)
+    if not isinstance(payload, dict) and request.form:
+        raw_results = request.form.get("results", "")
+        try:
+            parsed_results = json.loads(raw_results)
+        except (TypeError, ValueError):
+            parsed_results = None
+        payload = {
+            "device_id": request.form.get("device_id", ""),
+            "hostname": request.form.get("hostname", ""),
+            "results": parsed_results,
+        }
     if not isinstance(payload, dict):
         return jsonify(error="Expected a JSON scan payload."), 400
     device_id = payload.get("device_id", "")
@@ -293,8 +305,13 @@ def agent_helper_package():
         abort(403)
     if not _helper_package_request_allowed():
         return jsonify(error="Please wait a minute before creating another helper package."), 429
-    if not HELPER_EXE.is_file():
-        return jsonify(error="The Windows helper package is being prepared. Try again shortly."), 503
+    requested = request.get_json(silent=True) or {}
+    platform = requested.get("platform") if isinstance(requested, dict) else None
+    is_macos = platform == "macos"
+    helper_file = HELPER_MACOS_COMMAND if is_macos else HELPER_EXE
+    helper_name = "Port-a-Potty-Helper.command" if is_macos else "Port-a-Potty-Helper.exe"
+    if not helper_file.is_file():
+        return jsonify(error=f"The {'macOS' if is_macos else 'Windows'} helper package is being prepared. Try again shortly."), 503
     package_id = secrets.token_urlsafe(24)
     enrollment_token = secrets.token_urlsafe(32)
     expires_at = datetime.now(timezone.utc) + timedelta(days=30)
@@ -307,17 +324,24 @@ def agent_helper_package():
         "PORT_A_POTTY_HELPER_INTERVAL_SECONDS=60",
         "",
     ))
+    launch_instruction = "Double-click Port-a-Potty-Helper.command. If macOS warns about an unidentified developer, Control-click it and choose Open." if is_macos else "Double-click Port-a-Potty-Helper.exe."
     readme = (
         "Port a Potty Local Helper\r\n\r\n"
         "1. Extract this ZIP.\r\n"
-        "2. Double-click Port-a-Potty-Helper.exe.\r\n"
+        f"2. {launch_instruction}\r\n"
         "3. Keep its window open while you use the hosted dashboard.\r\n\r\n"
         "No Python, API keys, or other setup is required. This package's .env contains a\r\n"
         "device-scoped enrollment token. Keep the files together and do not share the .env.\r\n"
     )
     archive = BytesIO()
     with ZipFile(archive, "w", ZIP_DEFLATED) as zip_file:
-        zip_file.write(HELPER_EXE, "Port-a-Potty-Helper.exe")
+        if is_macos:
+            command_info = ZipInfo(helper_name)
+            command_info.create_system = 3  # Unix permissions are meaningful on macOS.
+            command_info.external_attr = 0o100755 << 16
+            zip_file.writestr(command_info, helper_file.read_bytes(), compress_type=ZIP_DEFLATED)
+        else:
+            zip_file.write(helper_file, helper_name)
         zip_file.writestr(".env", config)
         zip_file.writestr("START-HERE.txt", readme)
     archive.seek(0)
@@ -325,7 +349,7 @@ def agent_helper_package():
         archive.getvalue(),
         mimetype="application/zip",
         headers={
-            "Content-Disposition": "attachment; filename=Port-a-Potty-Local-Helper.zip",
+            "Content-Disposition": f"attachment; filename=Port-a-Potty-Local-Helper-{'macOS' if is_macos else 'Windows'}.zip",
             "Cache-Control": "no-store",
             "X-Port-A-Potty-Package-ID": package_id,
         },

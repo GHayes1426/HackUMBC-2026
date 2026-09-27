@@ -24,7 +24,7 @@ The website cannot safely inspect a visitor's PC by itself. The optional **Local
 2. **Listening Services** lists programs accepting connections and whether they are exposed to the network.
 3. **System Hardening** reports the state of Windows protections such as the firewall, Microsoft Defender, BitLocker, and UAC.
 
-Use **Download ready-to-run Windows helper** in the app, extract the ZIP, and double-click `Port-a-Potty-Helper.exe`. The package includes a unique, device-scoped enrollment token, so the user does not need Python, an API key, or a manual `.env` setup. Once the helper reports its first scan, the browser automatically shows the panels in this order:
+Use **Download local helper** in the app. The site detects the browser platform and downloads either a Windows EXE or a macOS `.command` launcher. Extract the ZIP and open the helper. The package includes a unique, device-scoped enrollment token, so the user does not need Python, an API key, or a manual `.env` setup. Once the helper reports its first scan, the browser automatically shows the panels in this order:
 
 1. Local Port Assessor
 2. Listening Services
@@ -75,7 +75,7 @@ Then open [http://127.0.0.1:5000](http://127.0.0.1:5000). For Gemini, ElevenLabs
 powershell -ExecutionPolicy Bypass -File .\scripts\build_windows_helper.ps1
 ```
 
-The build appears at `dist\Port-a-Potty-Helper.exe`. For the hosted app, users should download the scoped helper ZIP from the dashboard instead of manually configuring this developer build.
+The Windows build appears at `dist\Port-a-Potty-Helper.exe`. For the hosted app, users should download the scoped helper ZIP from the dashboard instead of manually configuring this developer build. On macOS, the dashboard ships a native `.command` helper that uses built-in macOS tools for the same read-only checks.
 
 ## Development checks
 

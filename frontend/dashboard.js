@@ -18,6 +18,11 @@ const AGENT_PACKAGE_STORAGE_KEY = "portAPottyAgentPackageId";
 const AGENT_COLLAPSED_STORAGE_KEY = "portAPottyAgentSetupCollapsed";
 const DETECTION_COLLAPSED_STORAGE_KEY = "portAPottyDetectionThresholdsCollapsed";
 
+function helperPlatform() {
+  const platform = navigator.userAgentData?.platform || navigator.platform || navigator.userAgent || "";
+  return /mac/i.test(platform) ? "macos" : "windows";
+}
+
 function setReadAloudButtonsDisabled(disabled, label = "Read aloud with ElevenLabs") {
   document.querySelectorAll(".assistant-read-answer").forEach((button) => {
     button.disabled = disabled;
@@ -498,6 +503,9 @@ function setupLocalHelper() {
   });
 
   input.value = localStorage.getItem(AGENT_PAIRING_STORAGE_KEY) || "";
+  const platform = helperPlatform();
+  const downloadLabel = platform === "macos" ? "Download ready-to-run macOS helper" : "Download ready-to-run Windows helper";
+  downloadButton.textContent = downloadLabel;
   const setCollapsed = (collapsed, persist = true) => {
     panel.classList.toggle("is-collapsed", collapsed);
     toggleButton.setAttribute("aria-expanded", String(!collapsed));
@@ -606,7 +614,8 @@ function setupLocalHelper() {
     try {
       const response = await fetch("/api/agent/package", {
         method: "POST",
-        headers: { "X-Dashboard": "1" },
+        headers: { "Content-Type": "application/json", "X-Dashboard": "1" },
+        body: JSON.stringify({ platform }),
       });
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
@@ -617,7 +626,7 @@ function setupLocalHelper() {
       const blob = await response.blob();
       const link = document.createElement("a");
       link.href = URL.createObjectURL(blob);
-      link.download = "Port-a-Potty-Local-Helper.zip";
+      link.download = `Port-a-Potty-Local-Helper-${platform === "macos" ? "macOS" : "Windows"}.zip`;
       document.body.append(link);
       link.click();
       link.remove();
@@ -625,12 +634,12 @@ function setupLocalHelper() {
       localStorage.setItem(AGENT_PACKAGE_STORAGE_KEY, packageId);
       localStorage.removeItem(AGENT_PAIRING_STORAGE_KEY);
       input.value = "";
-      setStatus("Downloaded. Extract the ZIP and double-click Port-a-Potty-Helper.exe; this panel will connect automatically after its first scan.");
+      setStatus(`Downloaded. Extract the ZIP and ${platform === "macos" ? "open Port-a-Potty-Helper.command" : "double-click Port-a-Potty-Helper.exe"}; this panel will connect automatically after its first scan.`);
     } catch (err) {
       setStatus(err.message || "Could not download the local helper.");
     } finally {
       downloadButton.disabled = false;
-      downloadButton.textContent = "Download ready-to-run Windows helper";
+      downloadButton.textContent = downloadLabel;
     }
   });
   window.portAPottyRefreshHelper = load;
