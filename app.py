@@ -258,6 +258,43 @@ def _built_in_explanation(findings: list[dict[str, str]], reason: str, question:
     return "\n\n".join(parts)
 
 
+# The four dashboard sections, in page order. The threat summary always shows
+# a tile for each; on the website the device checks wait for the helper.
+SUMMARY_SECTIONS = ("Local Port Assessor", "Listening Services", "IOC / CVE Analyzer", "System Hardening")
+STATUS_ORDER = ("warning", "review", "info", "ok", "error")
+LISTENING_LIMIT = 10
+
+
+def _summary_tiles(results: list[dict]) -> list[dict]:
+    """One threat-summary tile per section, with per-status item counts."""
+    by_name = {result["name"]: result for result in results}
+    names = list(SUMMARY_SECTIONS) + [name for name in by_name if name not in SUMMARY_SECTIONS]
+    tiles = []
+    for name in names:
+        result = by_name.get(name)
+        if result is None:
+            if HOSTED_MODE:
+                tiles.append({"name": name, "status": "error", "pending": True, "counts": {}})
+            continue
+        counts = {status: sum(1 for item in result["items"] if item["status"] == status) for status in STATUS_ORDER}
+        tiles.append({"name": name, "status": result["status"], "pending": False, "counts": counts})
+    return tiles
+
+
+def _display_items(check: dict) -> tuple[list[dict], int]:
+    """Items to show, and how many are hidden: Listening Services shows its 10 most important ports."""
+    items = check["items"]
+    if check["name"] != "Listening Services" or len(items) <= LISTENING_LIMIT:
+        return items, 0
+
+    def rank(item):
+        if item.get("action", {}).get("kind") == "reopen":
+            return 2  # keep ports this dashboard closed reachable
+        return {"warning": 0, "review": 1, "info": 3, "ok": 4}.get(item["status"], 5)
+
+    return sorted(items, key=rank)[:LISTENING_LIMIT], len(items) - LISTENING_LIMIT
+
+
 def current_results():
     """Run local checks, keeping cloud deployments focused on uploaded/demo logs."""
     # On Vercel "this computer" is a cloud server, so only the example-log check runs.
@@ -273,6 +310,8 @@ def dashboard():
         "index.html",
         results=results,
         summary=build_summary(results),
+        tiles=_summary_tiles(results),
+        display_items=_display_items,
         log_sources=log_sources(),
         selected_log_source=load_log_source(),
         hosted=HOSTED_MODE,

@@ -216,3 +216,24 @@ class MacHelperPackageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SummaryAndListeningTests(unittest.TestCase):
+    def test_summary_has_a_tile_for_each_section_on_the_website(self):
+        from app import _summary_tiles
+        with patch("app.HOSTED_MODE", True), patch.object(ioc_analyzer, "HOSTED", True):
+            tiles = _summary_tiles(ioc_only())
+        self.assertEqual([tile["name"] for tile in tiles],
+                         ["Local Port Assessor", "Listening Services", "IOC / CVE Analyzer", "System Hardening"])
+        self.assertEqual([tile["pending"] for tile in tiles], [True, True, False, True])
+        self.assertEqual(tiles[2]["counts"]["warning"], 2)
+
+    def test_listening_services_shows_its_ten_most_important_ports(self):
+        from app import _display_items
+        items = ([{"label": f"Port {n}", "status": "ok", "detail": ""} for n in range(20)]
+                 + [{"label": "Port 9999", "status": "review", "detail": ""}])
+        shown, hidden = _display_items({"name": "Listening Services", "items": items})
+        self.assertEqual((len(shown), hidden), (10, 11))
+        self.assertEqual(shown[0]["label"], "Port 9999")
+        shown, hidden = _display_items({"name": "Local Port Assessor", "items": items})
+        self.assertEqual((len(shown), hidden), (21, 0))

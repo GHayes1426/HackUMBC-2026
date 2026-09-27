@@ -248,6 +248,8 @@ a { color: inherit; }
 .tile-name { color: var(--muted); font-size: 0.9rem; }
 .tile-value { font-size: 1.8rem; font-weight: 700; }
 .tile-status { display: flex; align-items: center; gap: 6px; font-size: 0.9rem; }
+.tile[data-pending] .tile-value { color: var(--muted); }
+.more-note { margin: 10px 0 0; }
 
 .charts {
   display: grid;

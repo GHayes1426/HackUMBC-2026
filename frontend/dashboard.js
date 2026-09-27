@@ -75,15 +75,136 @@ function toast(message, level = "info") {
   return el;
 }
 
-async function refresh() {
+const STATUS_ORDER = ["warning", "review", "info", "ok", "error"];
+const STATUS_LABELS = { warning: "Risk", review: "Review", info: "In use", ok: "Safe", error: "Unknown" };
+const LISTENING_LIMIT = 10;
+let lastHelperScan;
+
+function statusTag(level) {
+  const safeLevel = STATUS_TAGS[level] ? level : "error";
+  const tag = document.createElement("span");
+  tag.className = "tag";
+  const icon = document.createElement("span");
+  icon.className = "tag-icon";
+  icon.setAttribute("aria-hidden", "true");
+  icon.textContent = STATUS_ICONS[safeLevel];
+  tag.append(icon, document.createTextNode(STATUS_TAGS[safeLevel]));
+  return tag;
+}
+
+function countStatuses(items) {
+  const counts = Object.fromEntries(STATUS_ORDER.map((status) => [status, 0]));
+  for (const item of items || []) counts[STATUS_TAGS[item.status] ? item.status : "error"] += 1;
+  return counts;
+}
+
+// Same markup as the template's bar rows.
+function renderBars(figure, bars, note) {
+  if (!figure) return;
+  const top = Math.max(1, ...bars.map((bar) => bar.value));
+  figure.querySelector(".bars")?.replaceChildren(...bars.map((bar) => {
+    const row = document.createElement("li");
+    row.className = `bar-row tone-${bar.tone}`;
+    row.title = `${bar.label}: ${bar.value}`;
+    row.tabIndex = 0;
+    const label = document.createElement("span");
+    label.className = "bar-label";
+    label.textContent = bar.label;
+    const track = document.createElement("span");
+    track.className = "bar-track";
+    const scale = document.createElement("span");
+    scale.className = "bar-scale";
+    const fill = document.createElement("span");
+    fill.className = "bar";
+    fill.style.width = `${Math.round((bar.value / top) * 1000) / 10}%`;
+    scale.append(fill);
+    const value = document.createElement("span");
+    value.className = "bar-value";
+    value.textContent = bar.value;
+    track.append(scale, value);
+    row.append(label, track);
+    return row;
+  }));
+  const caption = figure.querySelector("figcaption .muted");
+  if (caption && note !== undefined) caption.textContent = note;
+}
+
+// On the website the device tiles say "Needs helper" until a helper scan
+// arrives; then fill them in and recount the headline and summary charts.
+function updateThreatSummary(scan) {
+  if (!scan) return;
+  const tiles = [...document.querySelectorAll(".tile[data-tile]")];
+  let updated = false;
+  for (const result of scan.results || []) {
+    const tile = tiles.find((candidate) => candidate.dataset.tile === result.name);
+    if (!tile || !(tile.dataset.pending || tile.dataset.helper)) continue;
+    const status = STATUS_TAGS[result.status] ? result.status : "error";
+    const counts = countStatuses(result.items);
+    tile.className = `tile status-${status}`;
+    delete tile.dataset.pending;
+    tile.dataset.helper = "true";
+    tile.dataset.counts = JSON.stringify(counts);
+    tile.querySelector(".tile-value").textContent = counts.warning + counts.review;
+    tile.querySelector(".tile-status").replaceChildren(statusTag(status));
+    tile.querySelector(".tile-breakdown").textContent = `${counts.warning} risk · ${counts.review} review · ${counts.info} in use`;
+    updated = true;
+  }
+  if (!updated) return;
+
+  const known = tiles.filter((tile) => !tile.dataset.pending).map((tile) => ({
+    name: tile.dataset.tile,
+    status: [...tile.classList].find((name) => name.startsWith("status-"))?.slice(7),
+    counts: JSON.parse(tile.dataset.counts || "{}"),
+  }));
+  const sum = (status) => known.reduce((total, tile) => total + (tile.counts[status] || 0), 0);
+  const total = sum("warning") + sum("review");
+  const inUse = sum("info");
+  const clear = known.filter((tile) => tile.status === "ok" || tile.status === "info").length;
+  const heroTotal = document.getElementById("hero-total");
+  const heroScope = document.getElementById("hero-scope");
+  const heroDetail = document.getElementById("hero-detail");
+  if (heroTotal) heroTotal.textContent = total;
+  if (heroScope) heroScope.textContent = `potential threat${total === 1 ? "" : "s"} found in the example log and on ${scan.hostname || "your computer"}`;
+  if (heroDetail) {
+    heroDetail.textContent = `· ${sum("warning")} to fix, ${sum("review")} to review · ${inUse} port${inUse === 1 ? "" : "s"} ` +
+      `in normal use · ${clear} of ${tiles.length} checks clear`;
+  }
+  renderBars(document.querySelector('[data-chart="by-check"]'), known.map((tile) => ({
+    label: tile.name,
+    value: (tile.counts.warning || 0) + (tile.counts.review || 0),
+    tone: tile.counts.warning ? "warning" : tile.counts.review ? "review" : "ok",
+  })));
+  const itemCount = STATUS_ORDER.reduce((total, status) => total + sum(status), 0);
+  renderBars(document.querySelector('[data-chart="by-status"]'),
+    STATUS_ORDER.map((status) => ({ label: STATUS_LABELS[status], value: sum(status), tone: status })),
+    `${itemCount} items across ${known.length} checks`);
+}
+
+// anchor: the element the user just used. It (or, if it's gone, its panel) is
+// kept at the same spot on screen, so the page doesn't jump when content above
+// it changes size.
+async function refresh(anchor) {
   const main = document.getElementById("dashboard");
+  const section = anchor?.id ? anchor : anchor?.closest("[data-check]");
+  const anchorName = section?.dataset.check || section?.closest("[data-check]")?.dataset.check;
   main.classList.add("refreshing");
   try {
     const response = await fetch("/", { cache: "no-store" });
     if (!response.ok) throw new Error(`Rescan failed (${response.status})`);
     const page = new DOMParser().parseFromString(await response.text(), "text/html");
+    const anchorTop = section?.getBoundingClientRect().top;
+    // Keep the helper's panels during the swap; otherwise they vanish until the
+    // helper re-fetches, and the shorter page drops the user far down.
+    const kept = ["agent-results-primary", "agent-results-secondary"]
+      .map((id) => [id, [...(document.getElementById(id)?.childNodes || [])]]);
     main.replaceChildren(...page.getElementById("dashboard").childNodes);
-    window.portAPottyRefreshHelper?.();
+    for (const [id, nodes] of kept) document.getElementById(id)?.replaceChildren(...nodes);
+    updateThreatSummary(lastHelperScan);
+    const sameElement = section?.id && document.getElementById(section.id);
+    const moved = sameElement?.offsetParent ? sameElement
+      : anchorName && [...main.querySelectorAll("[data-check]")].find((el) => el.dataset.check === anchorName);
+    if (moved) window.scrollBy(0, moved.getBoundingClientRect().top - anchorTop);
+    window.portAPottyRefreshHelper?.({ quiet: true });
   } finally {
     main.classList.remove("refreshing");
   }
@@ -112,13 +233,13 @@ async function portAction(button) {
     waiting.remove();
     const reason = err instanceof TypeError ? "Can't reach the dashboard server. Is app.py running?" : err.message;
     toast(`Couldn't ${kind} port ${port}: ${reason}`, "error");
-    await refresh().catch(() => {});
+    await refresh(button).catch(() => {});
     return;
   }
 
   waiting.remove();
   try {
-    await refresh();
+    await refresh(button);
   } catch (err) {
     toast(err.message, "error");
   }
@@ -135,7 +256,8 @@ async function saveLogSource(select) {
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || "Couldn't change log source");
-    await refresh();
+    await refresh(select);
+    document.getElementById("log-source")?.focus({ preventScroll: true });
     toast("Example log changed and analyzed.", "success");
   } catch (err) {
     toast(err.message, "error");
@@ -153,7 +275,7 @@ async function uploadLog(form) {
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || "Couldn't upload log");
-    await refresh();
+    await refresh(form);
     toast(`${data.name} is selected and being analyzed.`, "success");
   } catch (err) {
     toast(err.message, "error");
@@ -619,17 +741,6 @@ function setupLocalHelper() {
   };
   setCollapsed(readSetting(AGENT_COLLAPSED_STORAGE_KEY) === "true", false);
   const setStatus = (message) => { status.textContent = message; };
-  const statusTag = (level) => {
-    const safeLevel = STATUS_TAGS[level] ? level : "error";
-    const tag = document.createElement("span");
-    tag.className = "tag";
-    const icon = document.createElement("span");
-    icon.className = "tag-icon";
-    icon.setAttribute("aria-hidden", "true");
-    icon.textContent = STATUS_ICONS[safeLevel];
-    tag.append(icon, document.createTextNode(STATUS_TAGS[safeLevel]));
-    return tag;
-  };
   const render = (scan) => {
     const { primary, secondary } = containers();
     if (!primary || !secondary) return;
@@ -657,7 +768,15 @@ function setupLocalHelper() {
       summary.textContent = result.summary || "";
       const list = document.createElement("ul");
       list.className = "agent-result-list";
-      for (const item of result.items || []) {
+      // Like the local dashboard, Listening Services shows only its 10 most important ports.
+      let items = result.items || [];
+      let hiddenCount = 0;
+      if (result.name === "Listening Services" && items.length > LISTENING_LIMIT) {
+        const rank = { warning: 0, review: 1, info: 3, ok: 4 };
+        items = [...items].sort((a, b) => (rank[a.status] ?? 5) - (rank[b.status] ?? 5)).slice(0, LISTENING_LIMIT);
+        hiddenCount = result.items.length - LISTENING_LIMIT;
+      }
+      for (const item of items) {
         const itemLevel = STATUS_TAGS[item.status] ? item.status : "error";
         const row = document.createElement("li");
         row.className = `item status-${itemLevel}`;
@@ -674,10 +793,18 @@ function setupLocalHelper() {
         list.append(row);
       }
       card.append(head, description, summary, list);
+      if (hiddenCount) {
+        const more = document.createElement("p");
+        more.className = "note more-note";
+        more.textContent = `Showing the ${items.length} most important of ${items.length + hiddenCount} listening ports. Ask the assistant about any other port.`;
+        card.append(more);
+      }
       // Match the local dashboard's order: port and listening panels sit
       // before IOC/CVE, while the hardening panel follows it.
       (result.name === "System Hardening" ? secondary : primary).append(card);
     }
+    lastHelperScan = scan;
+    updateThreatSummary(scan);
   };
   let waitTimer;
   const stopWaiting = () => { clearInterval(waitTimer); waitTimer = undefined; };

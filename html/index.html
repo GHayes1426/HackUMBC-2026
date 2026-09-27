@@ -88,13 +88,14 @@
     <section class="overview" aria-labelledby="overview-title">
       <h2 id="overview-title">Threat summary</h2>
 
+      {# The hero, tiles and two charts are recalculated by dashboard.js when a helper scan arrives. #}
       <div class="hero">
-        <span class="hero-value">{{ summary.total }}</span>
+        <span class="hero-value" id="hero-total">{{ summary.total }}</span>
         <span class="hero-label">
-          potential threat{{ "" if summary.total == 1 else "s" }} found{% if hosted %} in the example log{% endif %}
-          <span class="muted">&middot; {{ summary.risks }} to fix, {{ summary.reviews }} to review
+          <span id="hero-scope">potential threat{{ "" if summary.total == 1 else "s" }} found{% if hosted %} in the example log{% endif %}</span>
+          <span class="muted" id="hero-detail">&middot; {{ summary.risks }} to fix, {{ summary.reviews }} to review
             &middot; {{ summary.in_use }} port{{ "" if summary.in_use == 1 else "s" }} in normal use
-            &middot; {{ summary.checks_clear }} of {{ summary.categories|length }} checks clear</span>
+            &middot; {{ summary.checks_clear }} of {{ tiles|length }} checks clear</span>
         </span>
       </div>
 
@@ -111,19 +112,19 @@
       </div>
 
       <div class="tiles">
-        {% for c in summary.categories %}
-        <div class="tile status-{{ c.status }}">
-          <span class="tile-name">{{ c.name }}</span>
-          <span class="tile-value">{{ c.findings }}</span>
-          <span class="tile-status"><span class="tag"><span class="tag-icon" aria-hidden="true">{{ status_icon[c.status] }}</span>{{ summary.tags[c.status] }}</span></span>
-          <span class="tile-breakdown muted">{{ c.risks }} risk &middot; {{ c.reviews }} review &middot; {{ c.in_use }} in use</span>
+        {% for t in tiles %}
+        <div class="tile status-{{ t.status }}" data-tile="{{ t.name }}" data-counts="{{ t.counts|tojson|forceescape }}"{% if t.pending %} data-pending="true"{% endif %}>
+          <span class="tile-name">{{ t.name }}</span>
+          <span class="tile-value">{{ "–" if t.pending else t.counts.warning + t.counts.review }}</span>
+          <span class="tile-status"><span class="tag"><span class="tag-icon" aria-hidden="true">{{ status_icon[t.status] }}</span>{{ "Needs helper" if t.pending else summary.tags[t.status] }}</span></span>
+          <span class="tile-breakdown muted">{% if t.pending %}Connect the helper to check your computer{% else %}{{ t.counts.warning }} risk &middot; {{ t.counts.review }} review &middot; {{ t.counts.info }} in use{% endif %}</span>
         </div>
         {% endfor %}
       </div>
 
       <div class="charts">
         {% for chart in summary.charts %}
-        <figure class="chart">
+        <figure class="chart"{% if chart.id %} data-chart="{{ chart.id }}"{% endif %}>
           <figcaption>
             <span class="chart-title">{{ chart.title }}</span>
             <span class="muted">{{ chart.note }}</span>
@@ -148,7 +149,7 @@
     <div id="agent-results-primary" class="agent-results" aria-live="polite"></div>
 
     {% for check in results %}
-    <section class="panel status-{{ check.status }}">
+    <section class="panel status-{{ check.status }}" data-check="{{ check.name }}">
       <div class="panel-head">
         <h2>{{ check.name }}</h2>
         {% if check.example %}<span class="tag example-tag"><span class="tag-icon" aria-hidden="true">i</span>{{ "Your file" if check.example.uploaded else "Example data" }}</span>{% endif %}
@@ -183,8 +184,9 @@
       <p class="summary">{{ check.summary }}</p>
       {% if check.note %}<p class="note">{{ check.note }}</p>{% endif %}
 
+      {% set shown, hidden = display_items(check) %}
       <ul class="items">
-        {% for item in check["items"] %}
+        {% for item in shown %}
         {% set lesson = lesson_for_label(item.label) %}
         <li class="item status-{{ item.status }}">
           <span class="tag"><span class="tag-icon" aria-hidden="true">{{ status_icon[item.status] }}</span>{{ summary.tags[item.status] }}</span>
@@ -205,6 +207,7 @@
         </li>
         {% endfor %}
       </ul>
+      {% if hidden %}<p class="note more-note">Showing the {{ shown|length }} most important of {{ shown|length + hidden }} listening ports. Ask the assistant about any other port.</p>{% endif %}
     </section>
     {% else %}
     <p>No checks registered. Import one in <code>checks/__init__.py</code>.</p>

@@ -48,6 +48,7 @@ def build_summary(results):
 
     charts = [
         {
+            "id": "by-check",
             "title": "Potential threats by check",
             "note": "Risk + review items in each check",
             "bars": _with_widths([
@@ -57,6 +58,7 @@ def build_summary(results):
             ]),
         },
         {
+            "id": "by-status",
             "title": "Everything checked, by status",
             "note": f"{len(all_items)} items across {len(results)} checks",
             "bars": _with_widths([
