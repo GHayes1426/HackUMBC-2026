@@ -18,7 +18,7 @@ Detection rules are fixed (see `checks/runtime_settings.py`) so every visitor ge
 
 ### Learning guides (work on any device, including phones)
 
-- **Common ports explained:** for 17 common ports, what each one is, how attackers exploit it, a real incident (Mirai, WannaCry, BlueKeep, ADB.Miner, ...), an everyday analogy, and how to close it. The same lesson appears as a **How attackers use this port** drop-down on every port finding, including results from the helper. Content lives in `checks/port_lessons.py`.
+- **Common ports explained:** five simple habits that keep ports closed. Each port finding (including helper results) has a **How attackers use this port** drop-down: how attackers exploit it, a real incident (Mirai, WannaCry, BlueKeep, ...), an everyday analogy, and how to close it. Content lives in `checks/port_lessons.py`.
 - **Check this device (no download):** websites can't read a device's open ports, so this is a guided checklist for iPhone/iPad, Android, Mac and Windows (AirDrop, hotspot, wireless debugging/ADB, sharing settings, updates). The visitor's device is picked automatically. Content lives in `checks/device_guides.py`.
 
 ### Local device helper

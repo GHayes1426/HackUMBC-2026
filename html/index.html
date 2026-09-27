@@ -252,14 +252,6 @@
       <li><strong>{{ rule }}</strong> <span class="muted">{{ why }}</span></li>
       {% endfor %}
     </ol>
-    <div class="port-guide-list">
-      {% for port, lesson in port_lessons.items() %}
-      <details class="port-lesson">
-        <summary><span class="port-number">{{ port }}</span><span class="port-lesson-name">{{ lesson.name }}</span><span class="muted port-lesson-what">{{ lesson.what }}</span></summary>
-        {{ lesson_body(lesson) }}
-      </details>
-      {% endfor %}
-    </div>
   </section>
 
   <script id="port-lessons-data" type="application/json">{{ port_lessons|tojson }}</script>

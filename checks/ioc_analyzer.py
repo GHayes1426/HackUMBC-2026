@@ -141,7 +141,7 @@ class IOCAnalyzerCheck(Check):
             ),
         }
         note = ("On this website the port-to-CVE check is skipped, because the site runs on a cloud server, not your "
-                "device. See \"Common ports explained\" below for the famous vulnerabilities behind each port."
+                "device. Open \"How attackers use this port\" on any port finding to see its famous vulnerabilities."
                 if HOSTED else "")
 
         return {"status": status, "summary": summary, "items": items, "chart": chart,
