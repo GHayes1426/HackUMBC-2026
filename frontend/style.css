@@ -74,6 +74,7 @@ a { color: inherit; }
   margin-bottom: 20px;
 }
 .settings-panel h2 { margin: 0; font-size: 1.15rem; }
+.settings-panel .panel-head > .agent-toggle { margin-left: auto; align-self: center; }
 .settings-summary-copy { display: block; margin-top: 2px; color: var(--muted); font-size: .9rem; font-weight: 400; }
 .settings-content { margin-top: 12px; }
 .settings-panel.is-collapsed .settings-content { display: none; }
