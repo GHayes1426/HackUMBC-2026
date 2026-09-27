@@ -12,6 +12,7 @@ const ICONS = { success: "✓", info: "…", warning: "!", error: "×" };
 let activeAssistantAudio;
 let assistantSpeechGenerating = false;
 const AGENT_PAIRING_STORAGE_KEY = "portAPottyAgentDeviceId";
+const AGENT_PACKAGE_STORAGE_KEY = "portAPottyAgentPackageId";
 
 function setReadAloudButtonsDisabled(disabled, label = "Read aloud with ElevenLabs") {
   document.querySelectorAll(".assistant-read-answer").forEach((button) => {
@@ -476,9 +477,10 @@ function setupLocalHelper() {
   const form = document.getElementById("agent-pairing");
   const input = document.getElementById("agent-device-id");
   const refreshButton = document.getElementById("agent-refresh");
+  const downloadButton = document.getElementById("agent-download");
   const status = document.getElementById("agent-status");
   const container = document.getElementById("agent-results");
-  if (!form || !input || !refreshButton || !status || !container) return;
+  if (!form || !input || !refreshButton || !downloadButton || !status || !container) return;
 
   input.value = localStorage.getItem(AGENT_PAIRING_STORAGE_KEY) || "";
   const setStatus = (message) => { status.textContent = message; };
@@ -517,8 +519,9 @@ function setupLocalHelper() {
   };
   const load = async () => {
     const deviceId = input.value.trim();
-    if (!deviceId) {
-      setStatus("Paste the pairing ID printed by Port a Potty Helper first.");
+    const packageId = localStorage.getItem(AGENT_PACKAGE_STORAGE_KEY);
+    if (!deviceId && !packageId) {
+      setStatus("Download the ready-to-run helper, or paste a pairing ID from an existing helper.");
       container.replaceChildren();
       return;
     }
@@ -526,7 +529,10 @@ function setupLocalHelper() {
     refreshButton.textContent = "Refreshing…";
     setStatus("Checking for the latest local scan…");
     try {
-      const response = await fetch(`/api/agent/scan/${encodeURIComponent(deviceId)}`, { cache: "no-store" });
+      const endpoint = deviceId
+        ? `/api/agent/scan/${encodeURIComponent(deviceId)}`
+        : `/api/agent/package/${encodeURIComponent(packageId)}`;
+      const response = await fetch(endpoint, { cache: "no-store" });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || `Could not load scan (${response.status}).`);
       localStorage.setItem(AGENT_PAIRING_STORAGE_KEY, deviceId);
@@ -541,7 +547,41 @@ function setupLocalHelper() {
   };
   form.addEventListener("submit", (event) => { event.preventDefault(); load(); });
   refreshButton.addEventListener("click", load);
-  if (input.value) load();
+  downloadButton.addEventListener("click", async () => {
+    downloadButton.disabled = true;
+    downloadButton.textContent = "Preparing download…";
+    setStatus("Creating a device-scoped helper package…");
+    try {
+      const response = await fetch("/api/agent/package", {
+        method: "POST",
+        headers: { "X-Dashboard": "1" },
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || "Could not create the helper package.");
+      }
+      const packageId = response.headers.get("X-Port-A-Potty-Package-ID");
+      if (!packageId) throw new Error("The server did not return a package ID.");
+      const blob = await response.blob();
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = "Port-a-Potty-Local-Helper.zip";
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+      localStorage.setItem(AGENT_PACKAGE_STORAGE_KEY, packageId);
+      localStorage.removeItem(AGENT_PAIRING_STORAGE_KEY);
+      input.value = "";
+      setStatus("Downloaded. Extract the ZIP and double-click Port-a-Potty-Helper.exe; this panel will connect automatically after its first scan.");
+    } catch (err) {
+      setStatus(err.message || "Could not download the local helper.");
+    } finally {
+      downloadButton.disabled = false;
+      downloadButton.textContent = "Download ready-to-run Windows helper";
+    }
+  });
+  if (input.value || localStorage.getItem(AGENT_PACKAGE_STORAGE_KEY)) load();
 }
 
 document.addEventListener("submit", (event) => {

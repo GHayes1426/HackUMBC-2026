@@ -53,6 +53,15 @@ CREATE TABLE IF NOT EXISTS port_a_potty_agent_scans (
 );
 CREATE INDEX IF NOT EXISTS port_a_potty_agent_scans_device_time_idx
     ON port_a_potty_agent_scans (device_id, observed_at DESC);
+CREATE TABLE IF NOT EXISTS port_a_potty_agent_enrollments (
+    package_id TEXT PRIMARY KEY,
+    token_hash TEXT NOT NULL UNIQUE,
+    device_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS port_a_potty_agent_enrollments_device_idx
+    ON port_a_potty_agent_enrollments (device_id);
 """
 
 
@@ -245,6 +254,87 @@ def latest_agent_scan(device_id: str) -> dict[str, Any] | None:
                 if row is None:
                     return None
                 observed_at, hostname, results = row
+                return {
+                    "device_id": device_id,
+                    "observed_at": observed_at.isoformat(),
+                    "hostname": hostname,
+                    "results": results,
+                }
+    except psycopg.Error:
+        return None
+
+
+def create_agent_enrollment(package_id: str, token_hash: str, expires_at: datetime) -> bool:
+    """Store a one-device helper enrollment token without storing its secret."""
+    connection = _connection()
+    if connection is None:
+        return False
+    try:
+        with connection:
+            with connection.cursor() as cursor:
+                _ensure_schema(cursor)
+                cursor.execute(
+                    """INSERT INTO port_a_potty_agent_enrollments (package_id, token_hash, expires_at)
+                       VALUES (%s, %s, %s)""",
+                    (package_id, token_hash, expires_at),
+                )
+        return True
+    except psycopg.Error:
+        return False
+
+
+def claim_agent_enrollment(token_hash: str, device_id: str) -> str | None:
+    """Bind an enrollment token to its first helper device and return package ID."""
+    connection = _connection()
+    if connection is None:
+        return None
+    try:
+        with connection:
+            with connection.cursor() as cursor:
+                _ensure_schema(cursor)
+                cursor.execute(
+                    """SELECT package_id, device_id FROM port_a_potty_agent_enrollments
+                       WHERE token_hash = %s AND expires_at > now()
+                       FOR UPDATE""",
+                    (token_hash,),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    return None
+                package_id, claimed_device = row
+                if claimed_device is None:
+                    cursor.execute(
+                        "UPDATE port_a_potty_agent_enrollments SET device_id = %s WHERE package_id = %s",
+                        (device_id, package_id),
+                    )
+                elif claimed_device != device_id:
+                    return None
+                return package_id
+    except psycopg.Error:
+        return None
+
+
+def latest_agent_scan_for_package(package_id: str) -> dict[str, Any] | None:
+    """Read the newest local scan associated with a browser-created package."""
+    connection = _connection()
+    if connection is None:
+        return None
+    try:
+        with connection:
+            with connection.cursor() as cursor:
+                _ensure_schema(cursor)
+                cursor.execute(
+                    """SELECT scan.device_id, scan.observed_at, scan.hostname, scan.results
+                       FROM port_a_potty_agent_enrollments enrollment
+                       JOIN port_a_potty_agent_scans scan ON scan.device_id = enrollment.device_id
+                       WHERE enrollment.package_id = %s
+                       ORDER BY scan.observed_at DESC LIMIT 1""",
+                    (package_id,),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    return None
+                device_id, observed_at, hostname, results = row
                 return {
                     "device_id": device_id,
                     "observed_at": observed_at.isoformat(),

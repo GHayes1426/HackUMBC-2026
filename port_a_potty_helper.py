@@ -68,12 +68,14 @@ def local_results() -> list[dict[str, object]]:
 def upload_scan() -> str:
     load_configuration()
     base_url = os.environ.get("PORT_A_POTTY_API_URL", "").strip().rstrip("/")
-    api_key = os.environ.get("PORT_A_POTTY_AGENT_KEY", "").strip()
+    # Downloaded packages use their own device-scoped enrollment token. The
+    # legacy shared key remains useful for a developer's local checkout.
+    api_key = os.environ.get("PORT_A_POTTY_ENROLLMENT_TOKEN", "").strip() or os.environ.get("PORT_A_POTTY_AGENT_KEY", "").strip()
     vercel_bypass = os.environ.get("PORT_A_POTTY_VERCEL_BYPASS_SECRET", "").strip()
     pairing_id = device_id()
     if not base_url or not api_key:
         raise RuntimeError(
-            "Create a .env file beside this helper with PORT_A_POTTY_API_URL and PORT_A_POTTY_AGENT_KEY."
+            "This helper is missing its package configuration. Download a fresh helper ZIP from Port a Potty."
         )
     payload = json.dumps({
         "device_id": pairing_id,

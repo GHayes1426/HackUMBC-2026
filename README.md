@@ -73,20 +73,21 @@ required.
 ### Hosted dashboard with the local helper
 
 The Vercel dashboard intentionally uses only the simulated-log analyzer. To
-show the three checks that need access to the judge's computer, build the
-downloadable helper. It runs **Local Port Assessor**, **Listening Services**,
-and **System Hardening** on that computer, then uploads display-only results
-to Tiger Data through the Vercel API. The website can view results but cannot
-run commands, close ports, or change any local settings.
+show the three checks that need access to the judge's computer, use the
+**Download ready-to-run Windows helper** button in the hosted dashboard. The
+ZIP already includes the EXE and a unique, device-scoped enrollment file—no
+Python, API key, or environment setup is required. Extract it and double-click
+the EXE. The dashboard follows its first scan automatically.
 
-1. Add a long random `PORT_A_POTTY_AGENT_KEY` to the Vercel environment and
-   put the exact same value in a `.env` file beside the helper.
-2. Put the Vercel deployment address in `PORT_A_POTTY_API_URL` in that file.
-3. Run `powershell -ExecutionPolicy Bypass -File .\scripts\build_windows_helper.ps1`.
-4. Put the resulting `dist\Port-a-Potty-Helper.exe` and its `.env` together,
-   then run the EXE. It prints a pairing ID.
-5. Open the **Local device helper** panel in the hosted dashboard, paste that
-   pairing ID once, and select **Connect helper**.
+It runs **Local Port Assessor**, **Listening Services**, and **System
+Hardening** on that computer, then uploads display-only results to Tiger Data
+through the Vercel API. The website can view results but cannot run commands,
+close ports, or change any local settings.
+
+For local developer testing, run
+`powershell -ExecutionPolicy Bypass -File .\scripts\build_windows_helper.ps1`.
+The website package flow uses an individual enrollment token instead of the
+developer's shared `PORT_A_POTTY_AGENT_KEY`.
 
 The helper uploads once a minute by default. It can be tested from the repo
 with `python port_a_potty_helper.py --once`.

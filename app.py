@@ -15,16 +15,21 @@ Folders: templates live in html/ and static files in frontend/
 
 from dataclasses import asdict
 from collections import defaultdict, deque
+from datetime import datetime, timedelta, timezone
+from hashlib import sha256
+from io import BytesIO
 import json
 import os
 import re
 import hmac
+import secrets
 from threading import Lock
 from time import monotonic
 from pathlib import Path
 from urllib import parse, request as urlrequest
 from urllib.error import HTTPError
 from uuid import uuid4
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from flask import Flask, Response, abort, jsonify, render_template, request
 
@@ -36,7 +41,15 @@ from checks.runtime_settings import load_detection_settings, save_detection_sett
 from checks.demo_logs import load_log_source, log_sources, save_log_source, store_uploaded_log
 from werkzeug.utils import secure_filename
 from dawgwatch.settings import DetectionSettings
-from dawgwatch.storage import latest_agent_scan, recent_alerts, record_agent_scan, record_scan
+from dawgwatch.storage import (
+    claim_agent_enrollment,
+    create_agent_enrollment,
+    latest_agent_scan,
+    latest_agent_scan_for_package,
+    recent_alerts,
+    record_agent_scan,
+    record_scan,
+)
 
 app = Flask(
     __name__,
@@ -56,6 +69,11 @@ _gemini_requests: dict[str, deque[float]] = defaultdict(deque)
 _gemini_request_lock = Lock()
 AGENT_CHECK_NAMES = {"Local Port Assessor", "Listening Services", "System Hardening"}
 DEVICE_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{20,128}\Z")
+PACKAGE_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{20,128}\Z")
+HELPER_PACKAGE_LIMIT = 5
+_helper_package_requests: dict[str, deque[float]] = defaultdict(deque)
+_helper_package_lock = Lock()
+HELPER_EXE = Path(__file__).resolve().parent / "helper_package" / "Port-a-Potty-Helper.exe"
 
 
 def _settings_request_allowed() -> bool:
@@ -84,6 +102,32 @@ def _agent_request_allowed() -> bool:
     if supplied.startswith("Bearer "):
         supplied = supplied[7:]
     return bool(expected and supplied and hmac.compare_digest(expected, supplied))
+
+
+def _helper_package_request_allowed() -> bool:
+    """Keep anonymous package creation from becoming an unbounded token mint."""
+    client = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",", 1)[0].strip()
+    now = monotonic()
+    with _helper_package_lock:
+        calls = _helper_package_requests[client]
+        while calls and now - calls[0] >= GEMINI_WINDOW_SECONDS:
+            calls.popleft()
+        if len(calls) >= HELPER_PACKAGE_LIMIT:
+            return False
+        calls.append(now)
+        return True
+
+
+def _agent_enrollment_request_allowed(device_id: str) -> bool:
+    """Authorize an individual downloaded helper and bind it to one device."""
+    supplied = request.headers.get("Authorization", "")
+    if supplied.startswith("Bearer "):
+        supplied = supplied[7:]
+    if not supplied:
+        return False
+    if _agent_request_allowed():
+        return True
+    return claim_agent_enrollment(sha256(supplied.encode("utf-8")).hexdigest(), device_id) is not None
 
 
 def _safe_agent_results(value) -> list[dict[str, object]] | None:
@@ -175,8 +219,6 @@ def agent_scan_upload():
     """Receive a read-only local scan from the downloadable desktop helper."""
     if not os.environ.get("PORT_A_POTTY_AGENT_KEY"):
         return jsonify(error="The local helper has not been configured on this deployment."), 503
-    if not _agent_request_allowed():
-        return jsonify(error="The local helper key was rejected."), 401
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return jsonify(error="Expected a JSON scan payload."), 400
@@ -185,6 +227,8 @@ def agent_scan_upload():
     results = _safe_agent_results(payload.get("results"))
     if not isinstance(device_id, str) or not DEVICE_ID_PATTERN.fullmatch(device_id):
         return jsonify(error="Invalid helper pairing ID."), 400
+    if not _agent_enrollment_request_allowed(device_id):
+        return jsonify(error="The local helper key was rejected."), 401
     if not isinstance(hostname, str) or not hostname.strip() or len(hostname) > 255:
         return jsonify(error="Invalid helper computer name."), 400
     if results is None:
@@ -202,6 +246,63 @@ def agent_scan_latest(device_id: str):
     scan = latest_agent_scan(device_id)
     if scan is None:
         return jsonify(error="No local scan received yet. Run the Port a Potty Helper and try again."), 404
+    return jsonify(scan)
+
+
+@app.post("/api/agent/package")
+def agent_helper_package():
+    """Issue a ready-to-run Windows helper package with a scoped enrollment token."""
+    if not _settings_request_allowed():
+        abort(403)
+    if not _helper_package_request_allowed():
+        return jsonify(error="Please wait a minute before creating another helper package."), 429
+    if not HELPER_EXE.is_file():
+        return jsonify(error="The Windows helper package is being prepared. Try again shortly."), 503
+    package_id = secrets.token_urlsafe(24)
+    enrollment_token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=30)
+    if not create_agent_enrollment(package_id, sha256(enrollment_token.encode("utf-8")).hexdigest(), expires_at):
+        return jsonify(error="Tiger Data could not create the helper package."), 503
+    public_url = os.environ.get("PORT_A_POTTY_PUBLIC_URL", request.url_root.rstrip("/"))
+    config = "\n".join((
+        f"PORT_A_POTTY_API_URL={public_url.rstrip('/')}",
+        f"PORT_A_POTTY_ENROLLMENT_TOKEN={enrollment_token}",
+        "PORT_A_POTTY_HELPER_INTERVAL_SECONDS=60",
+        "",
+    ))
+    readme = (
+        "Port a Potty Local Helper\r\n\r\n"
+        "1. Extract this ZIP.\r\n"
+        "2. Double-click Port-a-Potty-Helper.exe.\r\n"
+        "3. Keep its window open while you use the hosted dashboard.\r\n\r\n"
+        "No Python, API keys, or other setup is required. This package's .env contains a\r\n"
+        "device-scoped enrollment token. Keep the files together and do not share the .env.\r\n"
+    )
+    archive = BytesIO()
+    with ZipFile(archive, "w", ZIP_DEFLATED) as zip_file:
+        zip_file.write(HELPER_EXE, "Port-a-Potty-Helper.exe")
+        zip_file.writestr(".env", config)
+        zip_file.writestr("START-HERE.txt", readme)
+    archive.seek(0)
+    return Response(
+        archive.getvalue(),
+        mimetype="application/zip",
+        headers={
+            "Content-Disposition": "attachment; filename=Port-a-Potty-Local-Helper.zip",
+            "Cache-Control": "no-store",
+            "X-Port-A-Potty-Package-ID": package_id,
+        },
+    )
+
+
+@app.get("/api/agent/package/<package_id>")
+def agent_package_latest(package_id: str):
+    """Let the browser that downloaded a package follow its paired helper automatically."""
+    if not PACKAGE_ID_PATTERN.fullmatch(package_id):
+        abort(404)
+    scan = latest_agent_scan_for_package(package_id)
+    if scan is None:
+        return jsonify(error="The downloaded helper has not reported a scan yet. Extract the ZIP and run the EXE."), 404
     return jsonify(scan)
 
 

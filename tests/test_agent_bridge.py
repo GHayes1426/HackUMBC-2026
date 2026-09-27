@@ -1,6 +1,10 @@
 import os
+from io import BytesIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
+from zipfile import ZipFile
 
 os.environ["PORT_A_POTTY_AGENT_KEY"] = "test-shared-helper-key"
 
@@ -45,6 +49,24 @@ class LocalHelperBridgeTests(unittest.TestCase):
         response = self.client.get(f"/api/agent/scan/{PAYLOAD['device_id']}")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["hostname"], "judge-pc")
+
+    @patch("app.create_agent_enrollment", return_value=True)
+    def test_download_package_contains_only_scoped_connection_config(self, enrollment):
+        with TemporaryDirectory() as directory:
+            helper = os.path.join(directory, "Port-a-Potty-Helper.exe")
+            with open(helper, "wb") as file:
+                file.write(b"not-a-real-exe")
+            with patch("app.HOSTED_MODE", True), patch("app.HELPER_EXE", Path(helper)):
+                response = self.client.post("/api/agent/package", headers={"X-Dashboard": "1"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, "application/zip")
+        self.assertTrue(response.headers["X-Port-A-Potty-Package-ID"])
+        with ZipFile(BytesIO(response.data)) as archive:
+            self.assertEqual(set(archive.namelist()), {"Port-a-Potty-Helper.exe", ".env", "START-HERE.txt"})
+            config = archive.read(".env").decode()
+        self.assertIn("PORT_A_POTTY_ENROLLMENT_TOKEN=", config)
+        self.assertNotIn("GEMINI", config)
+        self.assertNotIn("ELEVENLABS", config)
 
 
 if __name__ == "__main__":
