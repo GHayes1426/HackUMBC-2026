@@ -268,7 +268,11 @@ async function askAssistant(form) {
     const response = await fetch("/api/assistant", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({
+        question,
+        helper_package_id: localStorage.getItem(AGENT_PACKAGE_STORAGE_KEY) || undefined,
+        helper_device_id: localStorage.getItem(AGENT_PAIRING_STORAGE_KEY) || undefined,
+      }),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || "The assistant could not respond.");
@@ -481,8 +485,9 @@ function setupLocalHelper() {
   const refreshButton = document.getElementById("agent-refresh");
   const downloadButton = document.getElementById("agent-download");
   const status = document.getElementById("agent-status");
-  const container = document.getElementById("agent-results");
-  if (!form || !input || !refreshButton || !downloadButton || !status || !container) return;
+  const primaryContainer = document.getElementById("agent-results-primary");
+  const secondaryContainer = document.getElementById("agent-results-secondary");
+  if (!form || !input || !refreshButton || !downloadButton || !status || !primaryContainer || !secondaryContainer) return;
 
   input.value = localStorage.getItem(AGENT_PAIRING_STORAGE_KEY) || "";
   const setStatus = (message) => { status.textContent = message; };
@@ -498,10 +503,13 @@ function setupLocalHelper() {
     return tag;
   };
   const render = (scan) => {
-    container.replaceChildren();
+    primaryContainer.replaceChildren();
+    secondaryContainer.replaceChildren();
     const observed = new Date(scan.observed_at);
     setStatus(`Latest scan from ${scan.hostname} at ${Number.isNaN(observed.valueOf()) ? "an unknown time" : observed.toLocaleString()}.`);
-    for (const result of scan.results || []) {
+    const order = ["Local Port Assessor", "Listening Services", "System Hardening"];
+    const results = [...(scan.results || [])].sort((left, right) => order.indexOf(left.name) - order.indexOf(right.name));
+    for (const result of results) {
       const level = STATUS_TAGS[result.status] ? result.status : "error";
       const card = document.createElement("section");
       card.className = `panel agent-result status-${level}`;
@@ -533,7 +541,9 @@ function setupLocalHelper() {
         list.append(row);
       }
       card.append(head, description, summary, list);
-      container.append(card);
+      // Match the local dashboard's order: port and listening panels sit
+      // before IOC/CVE, while the hardening panel follows it.
+      (result.name === "System Hardening" ? secondaryContainer : primaryContainer).append(card);
     }
   };
   const load = async () => {
@@ -541,7 +551,8 @@ function setupLocalHelper() {
     const packageId = localStorage.getItem(AGENT_PACKAGE_STORAGE_KEY);
     if (!deviceId && !packageId) {
       setStatus("Download the ready-to-run helper, or paste a pairing ID from an existing helper.");
-      container.replaceChildren();
+      primaryContainer.replaceChildren();
+      secondaryContainer.replaceChildren();
       return;
     }
     refreshButton.disabled = true;
@@ -557,7 +568,8 @@ function setupLocalHelper() {
       localStorage.setItem(AGENT_PAIRING_STORAGE_KEY, deviceId);
       render(data);
     } catch (err) {
-      container.replaceChildren();
+      primaryContainer.replaceChildren();
+      secondaryContainer.replaceChildren();
       setStatus(err.message || "Could not load the local helper scan.");
     } finally {
       refreshButton.disabled = false;

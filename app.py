@@ -130,6 +130,43 @@ def _agent_enrollment_request_allowed(device_id: str) -> bool:
     return claim_agent_enrollment(sha256(supplied.encode("utf-8")).hexdigest(), device_id) is not None
 
 
+def _assistant_helper_context(payload: dict | None) -> list[dict[str, object]]:
+    """Return a compact snapshot of the helper scan paired in this browser."""
+    if not isinstance(payload, dict):
+        return []
+    package_id = payload.get("helper_package_id", "")
+    device_id = payload.get("helper_device_id", "")
+    scan = None
+    if isinstance(package_id, str) and PACKAGE_ID_PATTERN.fullmatch(package_id):
+        scan = latest_agent_scan_for_package(package_id)
+    elif isinstance(device_id, str) and DEVICE_ID_PATTERN.fullmatch(device_id):
+        scan = latest_agent_scan(device_id)
+    if not scan:
+        return []
+    context = []
+    remaining_items = 40
+    for result in scan.get("results", []):
+        if result.get("name") not in AGENT_CHECK_NAMES or remaining_items <= 0:
+            continue
+        items = []
+        for item in result.get("items", []):
+            if not isinstance(item, dict) or remaining_items <= 0:
+                continue
+            items.append({
+                "label": str(item.get("label", ""))[:300],
+                "status": str(item.get("status", "error")),
+                "detail": str(item.get("detail", ""))[:800],
+            })
+            remaining_items -= 1
+        context.append({
+            "check": result.get("name"),
+            "status": result.get("status"),
+            "summary": str(result.get("summary", ""))[:500],
+            "items": items,
+        })
+    return context
+
+
 def _safe_agent_results(value) -> list[dict[str, object]] | None:
     """Accept only the read-only result shape rendered by the hosted dashboard."""
     if not isinstance(value, list) or len(value) > 12:
@@ -318,6 +355,7 @@ def assistant():
         for result in current_results()
         for item in result.get("items", []) if item.get("status") in {"warning", "review"}
     ]
+    helper_context = _assistant_helper_context(payload)
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return jsonify(answer=_built_in_explanation(findings, "Gemini is not configured."), fallback=True)
@@ -326,7 +364,11 @@ def assistant():
         "avoid claiming certainty, and give safe remediation steps. Do not provide offensive instructions.\n"
         "Use plain text only: no Markdown headings, asterisks, backticks, or hash symbols. "
         "Use short paragraphs and simple numbered steps when useful. Keep the response below 300 words.\n"
-        f"Current findings: {json.dumps(findings)}\nUser question: {question.strip()}"
+        f"Current log findings: {json.dumps(findings)}\n"
+        f"Latest paired local helper scan (ports, services, and hardening): {json.dumps(helper_context)}\n"
+        "When asked about ports, services, or hardening, answer from the paired local helper scan when present. "
+        "If it is absent, say that no local helper data is paired instead of guessing.\n"
+        f"User question: {question.strip()}"
     )
     body = json.dumps({
         "contents": [{"parts": [{"text": prompt}]}],

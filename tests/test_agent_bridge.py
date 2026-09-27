@@ -50,6 +50,19 @@ class LocalHelperBridgeTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["hostname"], "judge-pc")
 
+    @patch("app.latest_agent_scan_for_package")
+    def test_assistant_context_uses_paired_helper_scan(self, latest):
+        latest.return_value = {
+            "results": [{
+                "name": "Local Port Assessor", "status": "warning", "summary": "One risky port open",
+                "items": [{"label": "Port 3389 · RDP", "status": "warning", "detail": "Open to the network."}],
+            }],
+        }
+        from app import _assistant_helper_context
+        context = _assistant_helper_context({"helper_package_id": "packageidentifier1234567890"})
+        self.assertEqual(context[0]["check"], "Local Port Assessor")
+        self.assertEqual(context[0]["items"][0]["label"], "Port 3389 · RDP")
+
     @patch("app.create_agent_enrollment", return_value=True)
     def test_download_package_contains_only_scoped_connection_config(self, enrollment):
         with TemporaryDirectory() as directory:
