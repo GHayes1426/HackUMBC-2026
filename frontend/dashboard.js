@@ -9,6 +9,8 @@
 // they're seen wherever the user has scrolled to.
 
 const ICONS = { success: "✓", info: "…", warning: "!", error: "×" };
+const STATUS_TAGS = { warning: "RISK", review: "REVIEW", info: "IN USE", ok: "SAFE", error: "UNKNOWN" };
+const STATUS_ICONS = { warning: "!", review: "?", info: "i", ok: "✓", error: "–" };
 let activeAssistantAudio;
 let assistantSpeechGenerating = false;
 const AGENT_PAIRING_STORAGE_KEY = "portAPottyAgentDeviceId";
@@ -484,15 +486,30 @@ function setupLocalHelper() {
 
   input.value = localStorage.getItem(AGENT_PAIRING_STORAGE_KEY) || "";
   const setStatus = (message) => { status.textContent = message; };
+  const statusTag = (level) => {
+    const safeLevel = STATUS_TAGS[level] ? level : "error";
+    const tag = document.createElement("span");
+    tag.className = "tag";
+    const icon = document.createElement("span");
+    icon.className = "tag-icon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = STATUS_ICONS[safeLevel];
+    tag.append(icon, document.createTextNode(STATUS_TAGS[safeLevel]));
+    return tag;
+  };
   const render = (scan) => {
     container.replaceChildren();
     const observed = new Date(scan.observed_at);
     setStatus(`Latest scan from ${scan.hostname} at ${Number.isNaN(observed.valueOf()) ? "an unknown time" : observed.toLocaleString()}.`);
     for (const result of scan.results || []) {
-      const card = document.createElement("article");
-      card.className = `agent-result status-${result.status || "error"}`;
-      const title = document.createElement("h3");
+      const level = STATUS_TAGS[result.status] ? result.status : "error";
+      const card = document.createElement("section");
+      card.className = `panel agent-result status-${level}`;
+      const head = document.createElement("div");
+      head.className = "panel-head";
+      const title = document.createElement("h2");
       title.textContent = result.name || "Local check";
+      head.append(title, statusTag(level));
       const description = document.createElement("p");
       description.className = "description";
       description.textContent = result.description || "";
@@ -502,8 +519,10 @@ function setupLocalHelper() {
       const list = document.createElement("ul");
       list.className = "agent-result-list";
       for (const item of result.items || []) {
+        const itemLevel = STATUS_TAGS[item.status] ? item.status : "error";
         const row = document.createElement("li");
-        row.className = `item status-${item.status || "error"}`;
+        row.className = `item status-${itemLevel}`;
+        row.append(statusTag(itemLevel));
         const label = document.createElement("span");
         label.className = "label";
         label.textContent = item.label || "";
@@ -513,7 +532,7 @@ function setupLocalHelper() {
         row.append(label, detail);
         list.append(row);
       }
-      card.append(title, description, summary, list);
+      card.append(head, description, summary, list);
       container.append(card);
     }
   };
