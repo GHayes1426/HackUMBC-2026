@@ -3,13 +3,18 @@ Helpers for running OS commands from checks. Not a Check.
 
 OS = "Darwin" (macOS), "Windows" or "Linux", so checks can pick the
 right commands with a dict lookup.
+
+HOSTED is True on the Vercel deployment, where "this computer" is a cloud
+server rather than the visitor's device, so device checks must not run.
 """
 
 import json
+import os
 import platform
 import subprocess
 
 OS = platform.system()
+HOSTED = bool(os.environ.get("VERCEL")) or os.environ.get("PORT_A_POTTY_HOSTED") == "1"
 
 
 def run(command, timeout=15):

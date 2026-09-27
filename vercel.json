@@ -1,7 +1,7 @@
 {
   "functions": {
     "app.py": {
-      "includeFiles": "helper_package/**"
+      "includeFiles": "{helper_package/**,port_a_potty_helper.py,checks/**}"
     }
   }
 }

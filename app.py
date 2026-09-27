@@ -3,6 +3,7 @@ Flask backend for Port a Potty.
 
     GET  /                          -> runs every check, renders html/index.html
     GET  /api/scan                  -> same results (plus summary) as JSON
+    POST /api/agent/package         -> ready-to-run helper ZIP (?platform=windows|mac)
     POST /api/ports/<port>/close    -> firewall-block a port (checks/port_control.py)
     POST /api/ports/<port>/reopen   -> remove that block
 
@@ -13,7 +14,6 @@ Folders: templates live in html/ and static files in frontend/
 (Flask's defaults would be templates/ and static/).
 """
 
-from dataclasses import asdict
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -29,7 +29,7 @@ from pathlib import Path
 from urllib import parse, request as urlrequest
 from urllib.error import HTTPError
 from uuid import uuid4
-from zipfile import ZIP_DEFLATED, ZipFile
+from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from flask import Flask, Response, abort, jsonify, render_template, request
 
@@ -37,10 +37,10 @@ import checks  # noqa: F401  -- importing the package registers every check
 from checks.base import run_all
 from checks.port_control import DASHBOARD_PORT, PortControlError, close_port, is_blocked, reopen_port
 from checks.summary import build_summary
-from checks.runtime_settings import load_detection_settings, save_detection_settings
 from checks.demo_logs import load_log_source, log_sources, save_log_source, store_uploaded_log
+from checks.device_guides import DEVICE_GUIDES
+from checks.port_lessons import PORT_LESSONS, SAFETY_RULES, lesson_for_label, lessons_in_text
 from werkzeug.utils import secure_filename
-from dawgwatch.settings import DetectionSettings
 from dawgwatch.storage import (
     claim_agent_enrollment,
     create_agent_enrollment,
@@ -73,7 +73,43 @@ PACKAGE_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{20,128}\Z")
 HELPER_PACKAGE_LIMIT = 5
 _helper_package_requests: dict[str, deque[float]] = defaultdict(deque)
 _helper_package_lock = Lock()
-HELPER_EXE = Path(__file__).resolve().parent / "helper_package" / "Port-a-Potty-Helper.exe"
+PROJECT_ROOT = Path(__file__).resolve().parent
+HELPER_EXE = PROJECT_ROOT / "helper_package" / "Port-a-Potty-Helper.exe"
+# The Mac helper is the same Python helper, run by the python3 that comes with
+# macOS. It ships only the three read-only device checks, which use nothing
+# outside Python's standard library.
+MAC_HELPER_FOLDER = "Port-a-Potty-Mac-Helper"
+MAC_HELPER_SOURCES = (
+    "port_a_potty_helper.py",
+    "checks/base.py",
+    "checks/hardening.py",
+    "checks/listeners.py",
+    "checks/listening_services.py",
+    "checks/port_catalog.py",
+    "checks/port_control.py",
+    "checks/port_scan.py",
+    "checks/system.py",
+)
+MAC_CHECKS_INIT = (
+    '"""Mac helper: only the three read-only device checks."""\n\n'
+    "from checks import port_scan  # noqa: F401\n"
+    "from checks import listening_services  # noqa: F401\n"
+    "from checks import hardening  # noqa: F401\n"
+)
+MAC_START_SCRIPT = """#!/bin/bash
+# Port a Potty Helper for macOS: read-only checks of this Mac, uploaded to your dashboard.
+cd "$(dirname "$0")" || exit 1
+if ! python3 -c "import sys; sys.exit(sys.version_info < (3, 8))" >/dev/null 2>&1; then
+  echo "Port a Potty needs Python 3, which comes with Apple's free Command Line Tools."
+  echo "If a window offers to install them, click Install, then run this helper again."
+  xcode-select --install >/dev/null 2>&1
+  read -r -p "Press Return to close."
+  exit 1
+fi
+echo "Leave this window open while you use the dashboard. Press Control-C to stop."
+python3 port_a_potty_helper.py
+read -r -p "Press Return to close."
+"""
 
 
 def _settings_request_allowed() -> bool:
@@ -199,9 +235,18 @@ def _safe_agent_results(value) -> list[dict[str, object]] | None:
     return cleaned
 
 
-def _built_in_explanation(findings: list[dict[str, str]], reason: str) -> str:
+def _built_in_explanation(findings: list[dict[str, str]], reason: str, question: str = "") -> str:
     """Keep the demo useful if an AI provider is unavailable or rate-limited."""
     parts = [f"Built-in analysis: {reason}"]
+    lessons = lessons_in_text(question)
+    for port, lesson in lessons:
+        parts.append(
+            f"Port {port}, {lesson['name']}: {lesson['what']} How attackers use it: {lesson['how']} "
+            f"Real example: {lesson['example']} Think of it like this: {lesson['analogy']} "
+            f"How to protect yourself: {lesson['protect']}"
+        )
+    if lessons:
+        return "\n\n".join(parts)
     labels = {item["label"] for item in findings}
     if "Possible brute-force login activity" in labels:
         parts.append("Brute-force activity means one source made repeated failed sign-in attempts against an account in a short time. Verify there were no successful logins, block unexpected sources, disable direct root login, and prefer SSH keys.")
@@ -209,15 +254,14 @@ def _built_in_explanation(findings: list[dict[str, str]], reason: str) -> str:
         parts.append("Password spraying means one source tried a small number of passwords across many accounts. Review affected accounts, enforce strong unique passwords and MFA, and add sign-in rate limiting.")
     if not findings:
         parts.append("No current warning or review findings are present in the selected log. Continue monitoring and keep authentication controls enabled.")
-    parts.append("This is a simulated-log assessment, so treat it as a demonstration of the recommended investigation steps rather than proof of a live attack.")
+    parts.append("These findings come from a static example log file, so treat them as a demonstration of what an attack looks like rather than proof of an attack on your device.")
     return "\n\n".join(parts)
 
 
 def current_results():
     """Run local checks, keeping cloud deployments focused on uploaded/demo logs."""
-    results = run_all()
-    if HOSTED_MODE:
-        results = [result for result in results if result["name"] == "IOC / CVE Analyzer"]
+    # On Vercel "this computer" is a cloud server, so only the example-log check runs.
+    results = run_all({"IOC / CVE Analyzer"} if HOSTED_MODE else None)
     record_scan(results, host="vercel" if HOSTED_MODE else "local")
     return results
 
@@ -229,20 +273,20 @@ def dashboard():
         "index.html",
         results=results,
         summary=build_summary(results),
-        detection_settings=asdict(load_detection_settings()),
         log_sources=log_sources(),
         selected_log_source=load_log_source(),
+        hosted=HOSTED_MODE,
+        port_lessons=PORT_LESSONS,
+        safety_rules=SAFETY_RULES,
+        device_guides=DEVICE_GUIDES,
+        lesson_for_label=lesson_for_label,
     )
 
 
 @app.route("/api/scan")
 def api_scan():
     results = current_results()
-    return jsonify(
-        results=results,
-        summary=build_summary(results),
-        detection_settings=asdict(load_detection_settings()),
-    )
+    return jsonify(results=results, summary=build_summary(results))
 
 
 @app.get("/api/history")
@@ -286,15 +330,33 @@ def agent_scan_latest(device_id: str):
     return jsonify(scan)
 
 
+def _mac_helper_files() -> dict[str, bytes] | None:
+    """Source files for the Mac helper package, or None if any is missing from this deployment."""
+    files = {}
+    for relative in MAC_HELPER_SOURCES:
+        path = PROJECT_ROOT / relative
+        if not path.is_file():
+            return None
+        files[relative] = path.read_bytes()
+    files["checks/__init__.py"] = MAC_CHECKS_INIT.encode()
+    return files
+
+
 @app.post("/api/agent/package")
 def agent_helper_package():
-    """Issue a ready-to-run Windows helper package with a scoped enrollment token."""
+    """Issue a ready-to-run Windows or Mac helper package with a scoped enrollment token."""
     if not _settings_request_allowed():
         abort(403)
+    platform = request.args.get("platform", "windows")
+    if platform not in {"windows", "mac"}:
+        return jsonify(error="Choose the Windows or Mac helper."), 400
+    mac_files = _mac_helper_files() if platform == "mac" else None
+    if platform == "windows" and not HELPER_EXE.is_file():
+        return jsonify(error="The Windows helper package is being prepared. Try again shortly."), 503
+    if platform == "mac" and mac_files is None:
+        return jsonify(error="The Mac helper package is being prepared. Try again shortly."), 503
     if not _helper_package_request_allowed():
         return jsonify(error="Please wait a minute before creating another helper package."), 429
-    if not HELPER_EXE.is_file():
-        return jsonify(error="The Windows helper package is being prepared. Try again shortly."), 503
     package_id = secrets.token_urlsafe(24)
     enrollment_token = secrets.token_urlsafe(32)
     expires_at = datetime.now(timezone.utc) + timedelta(days=30)
@@ -307,25 +369,48 @@ def agent_helper_package():
         "PORT_A_POTTY_HELPER_INTERVAL_SECONDS=60",
         "",
     ))
-    readme = (
-        "Port a Potty Local Helper\r\n\r\n"
-        "1. Extract this ZIP.\r\n"
-        "2. Double-click Port-a-Potty-Helper.exe.\r\n"
-        "3. Keep its window open while you use the hosted dashboard.\r\n\r\n"
-        "No Python, API keys, or other setup is required. This package's .env contains a\r\n"
-        "device-scoped enrollment token. Keep the files together and do not share the .env.\r\n"
-    )
     archive = BytesIO()
     with ZipFile(archive, "w", ZIP_DEFLATED) as zip_file:
-        zip_file.write(HELPER_EXE, "Port-a-Potty-Helper.exe")
-        zip_file.writestr(".env", config)
-        zip_file.writestr("START-HERE.txt", readme)
+        if platform == "windows":
+            filename = "Port-a-Potty-Local-Helper.zip"
+            zip_file.write(HELPER_EXE, "Port-a-Potty-Helper.exe")
+            zip_file.writestr(".env", config)
+            zip_file.writestr("START-HERE.txt", (
+                "Port a Potty Local Helper\r\n\r\n"
+                "1. Extract this ZIP.\r\n"
+                "2. Double-click Port-a-Potty-Helper.exe.\r\n"
+                "3. Keep its window open while you use the hosted dashboard.\r\n\r\n"
+                "No Python, API keys, or other setup is required. This package's .env contains a\r\n"
+                "device-scoped enrollment token. Keep the files together and do not share the .env.\r\n"
+            ))
+        else:
+            filename = f"{MAC_HELPER_FOLDER}.zip"
+            for relative, content in mac_files.items():
+                zip_file.writestr(f"{MAC_HELPER_FOLDER}/{relative}", content)
+            zip_file.writestr(f"{MAC_HELPER_FOLDER}/.env", config)
+            # Unix permissions in the ZIP keep the start script double-clickable after extraction.
+            script = ZipInfo(f"{MAC_HELPER_FOLDER}/Start Port a Potty Helper.command")
+            script.create_system = 3
+            script.external_attr = 0o100755 << 16
+            script.compress_type = ZIP_DEFLATED
+            zip_file.writestr(script, MAC_START_SCRIPT)
+            zip_file.writestr(f"{MAC_HELPER_FOLDER}/START-HERE.txt", (
+                "Port a Potty Helper for Mac\n\n"
+                "Easiest: open Terminal (Applications > Utilities) and paste:\n\n"
+                f"    cd ~/Downloads/{MAC_HELPER_FOLDER} && python3 port_a_potty_helper.py\n\n"
+                "Or double-click \"Start Port a Potty Helper.command\". If macOS says it can't be opened,\n"
+                "Control-click it and choose Open (or allow it in System Settings > Privacy & Security).\n\n"
+                "Keep the window open while you use the dashboard. It only reads this Mac's settings;\n"
+                "it never changes them and accepts no commands. If macOS offers to install the\n"
+                "Command Line Tools, click Install, then run the helper again.\n\n"
+                "The .env file holds a device-scoped connection token. Do not share it.\n"
+            ))
     archive.seek(0)
     return Response(
         archive.getvalue(),
         mimetype="application/zip",
         headers={
-            "Content-Disposition": "attachment; filename=Port-a-Potty-Local-Helper.zip",
+            "Content-Disposition": f"attachment; filename={filename}",
             "Cache-Control": "no-store",
             "X-Port-A-Potty-Package-ID": package_id,
         },
@@ -358,13 +443,17 @@ def assistant():
     helper_context = _assistant_helper_context(payload)
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        return jsonify(answer=_built_in_explanation(findings, "Gemini is not configured."), fallback=True)
+        return jsonify(answer=_built_in_explanation(findings, "Gemini is not configured.", question), fallback=True)
+    port_lessons = {port: lesson for port, lesson in lessons_in_text(question)}
     prompt = (
-        "You are Port a Potty, a defensive cybersecurity demo assistant. Explain findings plainly, "
-        "avoid claiming certainty, and give safe remediation steps. Do not provide offensive instructions.\n"
+        "You are Port a Potty, a defensive cybersecurity teaching assistant for beginners with no technical "
+        "background. Explain findings plainly with everyday analogies, avoid claiming certainty, and give safe "
+        "remediation steps. Stress why unused ports should stay closed and devices kept updated. "
+        "Do not provide offensive instructions.\n"
         "Use plain text only: no Markdown headings, asterisks, backticks, or hash symbols. "
         "Use short paragraphs and simple numbered steps when useful. Keep the response below 300 words.\n"
-        f"Current log findings: {json.dumps(findings)}\n"
+        f"Current findings (the log is a static example file, not the user's device): {json.dumps(findings)}\n"
+        f"Beginner port lessons relevant to the question: {json.dumps(port_lessons)}\n"
         f"Latest paired local helper scan (ports, services, and hardening): {json.dumps(helper_context)}\n"
         "When asked about ports, services, or hardening, answer from the paired local helper scan when present. "
         "If it is absent, say that no local helper data is paired instead of guessing.\n"
@@ -381,7 +470,7 @@ def assistant():
         answer = None
         for model in dict.fromkeys(models):
             if not _gemini_request_allowed():
-                return jsonify(answer=_built_in_explanation(findings, "Gemini is limited to five requests per minute."), fallback=True)
+                return jsonify(answer=_built_in_explanation(findings, "Gemini is limited to five requests per minute.", question), fallback=True)
             endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{parse.quote(model, safe='-._')}:generateContent?key=" + parse.quote(api_key, safe="")
             try:
                 with urlrequest.urlopen(urlrequest.Request(endpoint, data=body, headers={"Content-Type": "application/json"}), timeout=20) as response:
@@ -406,7 +495,7 @@ def assistant():
         # Keep the key and prompt out of the response, but retain enough detail
         # in Vercel logs to diagnose provider configuration problems.
         app.logger.warning("Gemini request failed: %s", exc)
-        return jsonify(answer=_built_in_explanation(findings, "Gemini is temporarily unavailable."), fallback=True)
+        return jsonify(answer=_built_in_explanation(findings, "Gemini is temporarily unavailable.", question), fallback=True)
     return jsonify(answer=answer)
 
 
@@ -471,23 +560,6 @@ def assistant_transcribe():
     return jsonify(text=transcript)
 
 
-@app.route("/api/settings/detection", methods=["GET", "POST"])
-def detection_settings():
-    if request.method == "GET":
-        return jsonify(asdict(load_detection_settings()))
-    if not _settings_request_allowed():
-        abort(403)
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        return jsonify(error="Expected a JSON object."), 400
-    try:
-        settings = DetectionSettings(**payload)
-    except (TypeError, ValueError) as exc:
-        return jsonify(error=str(exc)), 400
-    save_detection_settings(settings)
-    return jsonify(asdict(settings))
-
-
 @app.post("/api/settings/log-source")
 def log_source():
     if not _settings_request_allowed():
@@ -503,7 +575,7 @@ def log_source():
 
 @app.post("/api/logs/upload")
 def upload_log():
-    if request.host not in ALLOWED_HOSTS or request.headers.get("X-Dashboard") != "1":
+    if not _settings_request_allowed():
         abort(403)
     uploaded = request.files.get("log_file")
     if uploaded is None or not uploaded.filename:

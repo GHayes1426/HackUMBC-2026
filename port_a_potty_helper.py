@@ -12,13 +12,12 @@ import argparse
 import json
 import os
 import socket
+import ssl
 import sys
 import time
 from pathlib import Path
 from urllib import error, request
 from uuid import uuid4
-
-from dotenv import load_dotenv
 
 
 CHECK_NAMES = {"Local Port Assessor", "Listening Services", "System Hardening"}
@@ -34,7 +33,39 @@ def app_directory() -> Path:
 def load_configuration() -> None:
     # A colocated helper .env is the explicit pairing configuration. Let it
     # win over an unrelated system environment variable left by another tool.
-    load_dotenv(app_directory() / ".env", override=True)
+    path = app_directory() / ".env"
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        # The Mac package runs on the Python that ships with macOS, which has
+        # no python-dotenv; its .env is simple KEY=value lines.
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return
+        for line in lines:
+            key, sep, value = line.strip().partition("=")
+            if sep and key and not key.startswith("#"):
+                os.environ[key.strip()] = value.strip().strip("\"'")
+        return
+    load_dotenv(path, override=True)
+
+
+def state_directory() -> Path:
+    """Where the pairing ID is remembered: %APPDATA% on Windows, Application Support on a Mac."""
+    if os.environ.get("APPDATA"):
+        return Path(os.environ["APPDATA"])
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support"
+    return app_directory()
+
+
+def https_context() -> ssl.SSLContext:
+    """Verify HTTPS certificates, even on Mac Pythons that ship without a CA bundle."""
+    context = ssl.create_default_context()
+    if not context.cert_store_stats().get("x509_ca") and Path("/etc/ssl/cert.pem").is_file():
+        context.load_verify_locations("/etc/ssl/cert.pem")
+    return context
 
 
 def device_id() -> str:
@@ -42,7 +73,7 @@ def device_id() -> str:
     configured = os.environ.get("PORT_A_POTTY_DEVICE_ID", "").strip()
     if configured:
         return configured
-    state_path = Path(os.environ.get("APPDATA", app_directory())) / "Port a Potty Helper" / "device_id.txt"
+    state_path = state_directory() / "Port a Potty Helper" / "device_id.txt"
     try:
         if state_path.exists():
             value = state_path.read_text(encoding="utf-8").strip()
@@ -62,7 +93,7 @@ def local_results() -> list[dict[str, object]]:
     import checks  # noqa: F401 - registers checks
     from checks.base import run_all
 
-    return [result for result in run_all() if result["name"] in CHECK_NAMES]
+    return run_all(CHECK_NAMES)
 
 
 def upload_scan() -> str:
@@ -94,7 +125,7 @@ def upload_scan() -> str:
             headers=headers,
             method="POST",
         )
-        with request.urlopen(http_request, timeout=25) as response:
+        with request.urlopen(http_request, timeout=25, context=https_context()) as response:
             if response.status not in {200, 201, 202}:
                 raise RuntimeError(f"Server returned HTTP {response.status}.")
     except error.HTTPError as exc:

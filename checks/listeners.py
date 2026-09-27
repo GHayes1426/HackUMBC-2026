@@ -6,7 +6,8 @@ and Listening Services (to list everything). Results are cached for a few
 seconds so one page load only asks the OS once.
 
 Where the list comes from:
-    macOS   -- lsof            (without admin: only the current user's programs)
+    macOS   -- lsof            (without admin: only the current user's programs),
+               plus netstat for system services' ports (program shown as "?")
     Windows -- Get-NetTCPConnection + Get-Process (PowerShell)
     Linux   -- ss              (without root: program names show as "?")
 """
@@ -29,7 +30,9 @@ def _split_address(local):
 
 
 def _listeners_macos():
-    code, out = run(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-F", "cn"])
+    # "+c 0" asks for full program names; by default lsof cuts them to 9
+    # characters ("ControlCenter" -> "ControlCe"), which the catalog can't match.
+    code, out = run(["lsof", "+c", "0", "-nP", "-iTCP", "-sTCP:LISTEN", "-F", "cn"])
     if code is None:
         return None
     found, command = [], "?"
@@ -39,6 +42,19 @@ def _listeners_macos():
             command = re.sub(r"\\x([0-9a-fA-F]{2})", lambda m: chr(int(m[1], 16)), line[1:])
         elif line.startswith("n") and (split := _split_address(line[1:])):
             found.append((command, *split))
+
+    # Without admin rights lsof only lists this user's programs. netstat lists
+    # every listening socket (without names), so system services such as File
+    # Sharing or Screen Sharing still appear, as "?".
+    named_ports = {port for _, _, port in found}
+    code, out = run(["netstat", "-an", "-p", "tcp"])
+    for line in out.splitlines() if code is not None else []:
+        cols = line.split()
+        if len(cols) >= 6 and cols[0].startswith("tcp") and cols[-1] == "LISTEN":
+            # macOS writes addresses as host.port: "*.445", "127.0.0.1.631", "::1.631"
+            address, _, port = cols[3].rpartition(".")
+            if port.isdigit() and int(port) not in named_ports:
+                found.append(("?", address, int(port)))
     return found
 
 

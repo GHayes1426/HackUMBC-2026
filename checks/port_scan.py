@@ -80,13 +80,17 @@ class PortScanCheck(Check):
             elif port in open_ports:
                 open_count += 1
                 programs = programs_on_port(port)
+                named = [program for program in programs if program != "?"]  # "?" = name hidden by the OS
                 known = [describe(program, port) for program in programs]
                 known = [info for info in known if info["known"]]
                 if known:
-                    used_by = f"In use by {known[0]['name']} ({', '.join(programs)}), so something on this computer probably needs it."
+                    shown = f" ({', '.join(named)})" if named else ""
+                    used_by = f"In use by {known[0]['name']}{shown}, so something on this computer probably needs it."
+                    if known[0]["advice"]:
+                        used_by += f" {known[0]['advice']}"
                     status = "review"
-                elif programs:
-                    used_by = f"Open, used by unrecognized program(s): {', '.join(programs)}."
+                elif named:
+                    used_by = f"Open, used by unrecognized program(s): {', '.join(named)}."
                     status = "warning"
                 else:
                     used_by = "Open, but the program using it isn't visible without admin rights."

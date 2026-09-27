@@ -10,13 +10,16 @@ each risky port is for.
     PORTS:    port -> (service name, what it does, advice)
 
 Program matches win over port matches. A port match alone only counts as
-"known" for generic Windows hosts (svchost, System) or when the OS hides the
-program name ("?"); otherwise an unrecognized program on a familiar port
+"known" for generic hosts (svchost, System, launchd) or when the OS hides the
+program name ("?"). On a Mac, hidden programs on the ports that System
+Settings > Sharing opens are named after that switch (MACOS_SYSTEM_PORTS).
+Otherwise an unrecognized program on a familiar port
 (e.g. something unknown on 8080) stays unknown, with the port's usual use
 given as context. To teach the dashboard a new app, add a line to PROGRAMS.
 """
 
 from checks.port_control import DASHBOARD_PORT
+from checks.system import OS
 
 PROGRAMS = {
     # ---- macOS ----
@@ -39,6 +42,76 @@ PROGRAMS = {
         "macOS Screen Sharing",
         "Lets another computer see and control this Mac's screen.",
         "Turn off in System Settings > General > Sharing unless you use remote control.",
+    ),
+    "ardagent": (
+        "macOS Remote Management (Apple Remote Desktop)",
+        "Lets an administrator see, control and manage this Mac from another computer.",
+        "Turn off in System Settings > General > Sharing > Remote Management unless your school or work needs it.",
+    ),
+    "smbd": (
+        "macOS File Sharing (SMB)",
+        "Lets other computers open shared folders on this Mac.",
+        "Turn off in System Settings > General > Sharing > File Sharing unless you share folders.",
+    ),
+    "universalcontrol": (
+        "Universal Control (macOS)",
+        "Lets one keyboard and mouse control your nearby Mac and iPad.",
+        "Normal if you use Universal Control; turn off in System Settings > Displays > Advanced.",
+    ),
+    "airplayxpchelper": (
+        "AirPlay (macOS)",
+        "Streams audio and video between this Mac and AirPlay devices.",
+        "Normal if you use AirPlay.",
+    ),
+    "identityservicesd": (
+        "Apple ID services (macOS)",
+        "Handles iMessage, FaceTime and Continuity between your Apple devices.",
+        "Built into macOS.",
+    ),
+    "logioptionsplus": (
+        "Logitech Options+",
+        "Lets Logitech's app talk to your mouse and keyboard settings.",
+        "Normal if you use Logitech devices.",
+    ),
+    "adobe": (
+        "Adobe Creative Cloud",
+        "Adobe's background services for syncing, licensing and app updates.",
+        "Normal while Creative Cloud is installed.",
+    ),
+    "creative cloud": (
+        "Adobe Creative Cloud",
+        "Adobe's background services for syncing, licensing and app updates.",
+        "Normal while Creative Cloud is installed.",
+    ),
+    "cclibrary": (
+        "Adobe Creative Cloud Libraries",
+        "Syncs Creative Cloud Libraries for Adobe apps.",
+        "Normal while Creative Cloud is installed.",
+    ),
+    "slack": (
+        "Slack",
+        "Local helper used for calls and sign-in.",
+        "Normal while Slack is open.",
+    ),
+    "ollama": (
+        "Ollama",
+        "Runs AI models locally and serves them to apps on this computer (port 11434).",
+        "Should only listen on 127.0.0.1 unless you mean to share it.",
+    ),
+    "tailscaled": (
+        "Tailscale",
+        "A private VPN between your own devices.",
+        "Normal while Tailscale is running.",
+    ),
+    "sqlservr": (
+        "Microsoft SQL Server",
+        "A Microsoft database server, usually for software you're developing.",
+        "Should only be reachable by the apps that use it; stop the service when you don't need it.",
+    ),
+    "vmware-authd": (
+        "VMware Workstation",
+        "Lets VMware connect to and manage your virtual machines.",
+        "Normal while VMware is installed.",
     ),
     # ---- Windows ----
     "lsass": (
@@ -220,6 +293,8 @@ PORTS = {
     5357: ("Windows network discovery (WSD)", "Lets printers and scanners on your network find this PC.",
            "Turn off network discovery on public networks."),
     5432: ("PostgreSQL", "A PostgreSQL database server.", "Bind it to 127.0.0.1 unless other computers need it."),
+    5555: ("Android Debug Bridge (ADB)", "Developer tool that gives full control of Android devices over the network.",
+           "Turn off wireless debugging, or stop the emulator or adb server when you're done."),
     5900: ("VNC screen sharing", "Remote view and control of this computer's screen (macOS Screen Sharing uses it).",
            "Turn off screen sharing unless you use it; always set a strong password."),
     6379: ("Redis", "An in-memory database/cache.", "Bind it to 127.0.0.1; it has no password by default."),
@@ -233,8 +308,12 @@ PORTS = {
     27017: ("MongoDB", "A MongoDB database server.", "Bind it to 127.0.0.1; exposed MongoDB is a common data-leak cause."),
 }
 
-# Generic Windows process names; for these the port tells you which service it is.
-GENERIC_HOSTS = {"svchost", "system"}
+# Generic host process names; for these the port tells you which service it is.
+# (launchd starts macOS sharing services such as File Sharing and Screen Sharing on demand.)
+GENERIC_HOSTS = {"svchost", "system", "launchd"}
+
+# What "?" means: the OS hides the program's name from non-admin users.
+HIDDEN_PROGRAM = "Hidden system program"
 
 WINDOWS_DYNAMIC_RPC = (
     "Windows internal service port",
@@ -242,18 +321,38 @@ WINDOWS_DYNAMIC_RPC = (
     "Built into Windows. Keep Windows Firewall on so other devices can't reach it.",
 )
 
+# On a Mac, lsof can't name programs run by the system (root) without admin
+# rights, but these ports are opened by the switches in System Settings > Sharing.
+MACOS_SYSTEM_PORTS = {
+    22: ("macOS Remote Login (SSH)", "Remote Login lets people sign in to this Mac's command line over the network.",
+         "Turn off in System Settings > General > Sharing > Remote Login unless you use it."),
+    88: ("macOS sharing sign-in (Kerberos)", "Macs use Kerberos to sign in to each other for Screen Sharing and File Sharing.",
+         "Closes when Screen Sharing and File Sharing are off in System Settings > General > Sharing."),
+    445: ("macOS File Sharing (SMB)", "File Sharing lets other computers open shared folders on this Mac.",
+          "Turn off in System Settings > General > Sharing > File Sharing unless you share folders."),
+    548: ("macOS File Sharing (AFP)", "Older Apple file sharing that lets other Macs open shared folders.",
+          "Turn off in System Settings > General > Sharing > File Sharing unless you share folders."),
+    3283: ("macOS Remote Management", "Apple Remote Desktop lets an administrator control and manage this Mac.",
+           "Turn off in System Settings > General > Sharing > Remote Management unless your school or work needs it."),
+    3689: ("macOS Media Sharing", "Shares your music and video library with other devices on your network.",
+           "Turn off in System Settings > General > Sharing > Media Sharing if you don't use it."),
+    5900: ("macOS Screen Sharing (VNC)", "Screen Sharing lets another computer see and control this Mac's screen.",
+           "Turn off in System Settings > General > Sharing > Screen Sharing unless you use it."),
+}
+
 
 def _normalize(command):
     name = command.lower().strip()
     return name[:-4] if name.endswith(".exe") else name
 
 
-def describe(command, port):
+def describe(command, port, os_name=None):
     """
     Return {"name", "what", "advice", "known"} for a program listening on a port.
     known=False means neither the program nor the port was recognized.
     """
     name = _normalize(command)
+    os_name = os_name or OS
 
     if port == DASHBOARD_PORT and name.startswith("python"):
         return {"name": "This dashboard", "what": "The Network Security Dashboard you're looking at.",
@@ -267,6 +366,10 @@ def describe(command, port):
                 return {"name": friendly, "what": what, "advice": advice, "known": True}
 
     trusted_by_port = name in GENERIC_HOSTS or name == "?"
+    if trusted_by_port and os_name == "Darwin" and port in MACOS_SYSTEM_PORTS:
+        friendly, what, advice = MACOS_SYSTEM_PORTS[port]
+        return {"name": friendly, "what": what, "advice": advice, "known": True}
+
     if port in PORTS:
         service, what, advice = PORTS[port]
         if trusted_by_port:
@@ -274,9 +377,14 @@ def describe(command, port):
         return {"name": command, "what": f"Port {port} is normally used for {service} ({what[0].lower()}{what[1:].rstrip('.')}).",
                 "advice": "", "known": False}
 
-    if name in GENERIC_HOSTS and 49152 <= port <= 65535:
+    if name in GENERIC_HOSTS and name != "launchd" and 49152 <= port <= 65535:
         friendly, what, advice = WINDOWS_DYNAMIC_RPC
         return {"name": friendly, "what": what, "advice": advice, "known": True}
+
+    if name == "?":
+        return {"name": HIDDEN_PROGRAM,
+                "what": "The operating system hides which program this is unless you have admin rights.",
+                "advice": "", "known": False}
 
     return {"name": command, "what": "", "advice": "", "known": False}
 

@@ -3,19 +3,31 @@
   Dashboard page (Jinja template rendered by app.py's "/" route).
 
   Receives:
-    results -- list from checks.base.run_all(); each entry is
-               {name, description, status, summary, items[, chart]}
-    summary -- dict from checks.summary.build_summary(results)
+    results        -- list from checks.base.run_all(); each entry is
+                      {name, description, status, summary, items[, chart, note, example]}
+    summary        -- dict from checks.summary.build_summary(results)
+    hosted         -- True on the website (device checks come from the helper)
+    port_lessons, safety_rules, lesson_for_label -- checks/port_lessons.py
+    device_guides  -- checks/device_guides.py
 
-  Both are looped over, so new checks show up without editing this file.
-  An item with an "action" gets a Close/Reopen button, handled by
-  frontend/dashboard.js, which also swaps in a fresh copy of <main> after
-  each change (no full reload) and shows notifications in #toasts.
+  Both results and summary are looped over, so new checks show up without
+  editing this file. An item with an "action" gets a Close/Reopen button, and
+  an item labeled "Port <n> ..." gets a "How attackers use this port"
+  drop-down; both are handled by frontend/dashboard.js, which also swaps in a
+  fresh copy of <main> after each change (no full reload).
 
   Note: use check["items"], not check.items. On a dict, Jinja resolves
   .items to the dict's built-in items() method.
 -->
 {% set status_icon = {"warning": "!", "review": "?", "info": "i", "ok": "✓", "error": "–"} %}
+{% macro lesson_body(lesson) %}
+<dl class="lesson-list">
+  <div><dt>How attackers use it</dt><dd>{{ lesson.how }}</dd></div>
+  <div><dt>Real example</dt><dd>{{ lesson.example }}</dd></div>
+  <div><dt>Think of it like this</dt><dd>{{ lesson.analogy }}</dd></div>
+  <div class="lesson-protect"><dt>How to keep it closed</dt><dd>{{ lesson.protect }}</dd></div>
+</dl>
+{% endmacro %}
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -27,7 +39,11 @@
 <body>
   <header>
     <h1>Port a Potty</h1>
-    <p>Assessing <code>127.0.0.1</code> &middot; <a href="{{ url_for('dashboard') }}" id="rescan">Rescan</a></p>
+    <p class="tagline">Ports are the numbered doors into your device. See which ones are open, how attackers use them, and how to close them.</p>
+    <p class="header-meta">
+      {% if hosted %}Example log analysis &middot; add the helper to check your own computer{% else %}Assessing <code>127.0.0.1</code>{% endif %}
+      &middot; <a href="{{ url_for('dashboard') }}" id="rescan">Rescan</a>
+    </p>
   </header>
 
   <div id="toasts" class="toasts" aria-live="polite"></div>
@@ -42,9 +58,21 @@
       </div>
     </div>
     <div class="agent-setup-body">
-      <p class="description">Run the downloadable helper on a computer to show its local Port Assessor, Listening Services, and System Hardening results here.</p>
-      <button type="button" id="agent-download" class="save-settings agent-download">Download ready-to-run Windows helper</button>
-      <p class="muted agent-download-note">Downloads a ZIP containing the EXE and its device-scoped connection file. Extract it, then double-click the EXE.</p>
+      <p class="description">Run the downloadable helper on a Windows PC or Mac to show that computer's open ports, listening programs and built-in protections here. It only reads; it never changes your settings.</p>
+      <p class="phone-note" id="agent-phone-note" hidden>On a phone or tablet? The helper runs on computers only. Use <a href="#device-check">Check this device</a> below instead; no download needed.</p>
+      <div class="agent-downloads">
+        <button type="button" class="save-settings agent-download" data-platform="windows">Download for Windows</button>
+        <button type="button" class="save-settings agent-download" data-platform="mac">Download for Mac</button>
+      </div>
+      <p class="muted agent-download-note">Downloads a ZIP with the helper and a connection file just for this browser. Windows: extract it and double-click the EXE. Mac: follow the steps that appear after downloading.</p>
+      <div class="mac-steps" id="mac-steps" hidden>
+        <p><strong>Mac:</strong> open <em>Terminal</em> (Applications &gt; Utilities), paste this and press Return:</p>
+        <div class="copy-row">
+          <code id="mac-command">cd ~/Downloads/Port-a-Potty-Mac-Helper &amp;&amp; python3 port_a_potty_helper.py</code>
+          <button type="button" class="agent-toggle" id="mac-copy">Copy</button>
+        </div>
+        <p class="muted">Or double-click <em>Start Port a Potty Helper.command</em> in the extracted folder. If macOS offers to install Command Line Tools, click Install and run it again.</p>
+      </div>
       <form id="agent-pairing" class="agent-pairing">
         <label>Manual helper pairing ID
           <input id="agent-device-id" name="device_id" maxlength="128" autocomplete="off" placeholder="Paste the ID printed by Port a Potty Helper" aria-describedby="agent-status">
@@ -57,59 +85,13 @@
 
   <main id="dashboard">
 
-    <section class="settings-panel" id="detection-panel" aria-labelledby="settings-title">
-      <div class="panel-head">
-        <div>
-          <h2 id="settings-title">Detection thresholds</h2>
-          <span class="settings-summary-copy">Tune alert sensitivity and choose a simulated or uploaded log.</span>
-        </div>
-        <button type="button" id="detection-toggle" class="agent-toggle" aria-expanded="true">Collapse thresholds</button>
-      </div>
-      <div class="settings-content">
-      <p class="description">Tune how many failed logins trigger an alert. Changes apply to the next scan on this device.</p>
-      <label class="scenario-picker">Log source
-        <select id="log-source">
-          {% for source, title in log_sources %}
-          <option value="{{ source }}"{{ " selected" if source == selected_log_source }}>{{ title }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <form id="log-upload" class="upload-form" enctype="multipart/form-data">
-        <label>Upload a log file <input name="log_file" type="file" accept=".log,.txt,text/plain" required></label>
-        <button type="submit" class="save-settings">Upload and analyze</button>
-        <span class="muted">UTF-8 .log or .txt, up to 512 KB. Your newest 8 uploads stay available.</span>
-      </form>
-      <form id="detection-settings" class="settings-form">
-        <label>Brute-force failures
-          <input name="brute_force_failures" type="number" min="1" required value="{{ detection_settings.brute_force_failures }}">
-        </label>
-        <label>Brute-force window (seconds)
-          <input name="brute_force_window_seconds" type="number" min="1" required value="{{ detection_settings.brute_force_window_seconds }}">
-        </label>
-        <label>Password-spray accounts
-          <input name="password_spray_accounts" type="number" min="1" required value="{{ detection_settings.password_spray_accounts }}">
-        </label>
-        <label>Password-spray window (seconds)
-          <input name="password_spray_window_seconds" type="number" min="1" required value="{{ detection_settings.password_spray_window_seconds }}">
-        </label>
-        <label>Maximum attempts per sprayed account
-          <input name="password_spray_max_attempts_per_account" type="number" min="1" required value="{{ detection_settings.password_spray_max_attempts_per_account }}">
-        </label>
-        <label>Alert cooldown (seconds)
-          <input name="alert_cooldown_seconds" type="number" min="1" required value="{{ detection_settings.alert_cooldown_seconds }}">
-        </label>
-        <button type="submit" class="save-settings">Save thresholds</button>
-      </form>
-      </div>
-    </section>
-
     <section class="overview" aria-labelledby="overview-title">
       <h2 id="overview-title">Threat summary</h2>
 
       <div class="hero">
         <span class="hero-value">{{ summary.total }}</span>
         <span class="hero-label">
-          potential threat{{ "" if summary.total == 1 else "s" }} found
+          potential threat{{ "" if summary.total == 1 else "s" }} found{% if hosted %} in the example log{% endif %}
           <span class="muted">&middot; {{ summary.risks }} to fix, {{ summary.reviews }} to review
             &middot; {{ summary.in_use }} port{{ "" if summary.in_use == 1 else "s" }} in normal use
             &middot; {{ summary.checks_clear }} of {{ summary.categories|length }} checks clear</span>
@@ -169,14 +151,41 @@
     <section class="panel status-{{ check.status }}">
       <div class="panel-head">
         <h2>{{ check.name }}</h2>
+        {% if check.example %}<span class="tag example-tag"><span class="tag-icon" aria-hidden="true">i</span>{{ "Your file" if check.example.uploaded else "Example data" }}</span>{% endif %}
         <span class="tag"><span class="tag-icon" aria-hidden="true">{{ status_icon[check.status] }}</span>{{ summary.tags[check.status] }}</span>
       </div>
       <p class="description">{{ check.description }}</p>
+
+      {% if check.example %}
+      <div class="example-banner" role="note">
+        <p class="example-title">{{ "Uploaded file" if check.example.uploaded else "Static example file" }}: <code>{{ check.example.file }}</code></p>
+        <p>{{ check.example.text }}</p>
+        <div class="example-controls">
+          <label class="scenario-picker">Try a different example log
+            <select id="log-source">
+              {% for source, title in log_sources %}
+              <option value="{{ source }}"{{ " selected" if source == selected_log_source }}>{{ title }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <details class="upload-details">
+            <summary>Or analyze your own log file</summary>
+            <form id="log-upload" class="upload-form" enctype="multipart/form-data">
+              <label>Log file <input name="log_file" type="file" accept=".log,.txt,text/plain" required></label>
+              <button type="submit" class="save-settings">Upload and analyze</button>
+              <span class="muted">SSH-style UTF-8 .log or .txt, up to 512 KB. The newest 8 uploads stay available.</span>
+            </form>
+          </details>
+        </div>
+      </div>
+      {% endif %}
+
       <p class="summary">{{ check.summary }}</p>
       {% if check.note %}<p class="note">{{ check.note }}</p>{% endif %}
 
       <ul class="items">
         {% for item in check["items"] %}
+        {% set lesson = lesson_for_label(item.label) %}
         <li class="item status-{{ item.status }}">
           <span class="tag"><span class="tag-icon" aria-hidden="true">{{ status_icon[item.status] }}</span>{{ summary.tags[item.status] }}</span>
           <span class="label">{{ item.label }}</span>
@@ -186,6 +195,12 @@
                   data-kind="{{ item.action.kind }}" data-port="{{ item.action.port }}">
             {{ "Close port" if item.action.kind == "close" else "Reopen port" }}
           </button>
+          {% endif %}
+          {% if lesson %}
+          <details class="lesson">
+            <summary>How attackers use this port</summary>
+            {{ lesson_body(lesson) }}
+          </details>
           {% endif %}
         </li>
         {% endfor %}
@@ -198,28 +213,91 @@
     <div id="agent-results-secondary" class="agent-results" aria-live="polite"></div>
   </main>
 
-  <aside class="assistant-dock" aria-label="Port a Potty assistant">
-    <button type="button" class="assistant-resize-handle" aria-label="Resize assistant window" title="Drag to resize"></button>
-    <div class="assistant-heading">
-      <strong>Port a Potty Assistant</strong>
-      <span>ElevenLabs voice assistant for the current log findings</span>
-      <span id="assistant-voice-status" class="assistant-voice-status">Dictate one message or start Conversation mode to enable your microphone.</span>
-      <div id="assistant-voice-indicator" class="assistant-voice-indicator" role="status" hidden>
-        <span class="voice-state-dot" aria-hidden="true"></span><span id="assistant-voice-state">Listening</span>
+  <section class="learn-panel" id="device-check" aria-labelledby="device-check-title">
+    <h2 id="device-check-title">Check this device: no download</h2>
+    <p class="description">Websites can't look at a device's open ports (browsers keep sites sandboxed, which protects you), so this is a guided check instead. It works on phones too. Pick your device and tick off each step.</p>
+    <div class="device-tabs" role="tablist" aria-label="Device type">
+      {% for key, guide in device_guides.items() %}
+      <button type="button" role="tab" class="device-tab" id="device-tab-{{ key }}" data-device="{{ key }}"
+              aria-controls="device-guide-{{ key }}" aria-selected="{{ 'true' if loop.first else 'false' }}">{{ guide.title }}</button>
+      {% endfor %}
+    </div>
+    {% for key, guide in device_guides.items() %}
+    <div class="device-guide" id="device-guide-{{ key }}" role="tabpanel" aria-labelledby="device-tab-{{ key }}" data-device="{{ key }}"{% if not loop.first %} hidden{% endif %}>
+      <p class="muted">{{ guide.intro }}</p>
+      <ol class="device-steps">
+        {% for what, where, why in guide.steps %}
+        <li>
+          <label class="device-step">
+            <input type="checkbox" class="device-step-check">
+            <span>
+              <strong>{{ what }}</strong>
+              <span class="device-where">{{ where }}</span>
+              <span class="muted">{{ why }}</span>
+            </span>
+          </label>
+        </li>
+        {% endfor %}
+      </ol>
+      <p class="device-progress" aria-live="polite">0 of {{ guide.steps|length }} steps done</p>
+    </div>
+    {% endfor %}
+  </section>
+
+  <section class="learn-panel" id="port-guide" aria-labelledby="port-guide-title">
+    <h2 id="port-guide-title">Common ports explained</h2>
+    <p class="description">Attackers run automated scanners that can check the entire internet in under an hour, knocking on every door and trying the ones that open. An open port is only as safe as the program behind it. These five habits keep your doors shut:</p>
+    <ol class="safety-rules">
+      {% for rule, why in safety_rules %}
+      <li><strong>{{ rule }}</strong> <span class="muted">{{ why }}</span></li>
+      {% endfor %}
+    </ol>
+    <div class="port-guide-list">
+      {% for port, lesson in port_lessons.items() %}
+      <details class="port-lesson">
+        <summary><span class="port-number">{{ port }}</span><span class="port-lesson-name">{{ lesson.name }}</span><span class="muted port-lesson-what">{{ lesson.what }}</span></summary>
+        {{ lesson_body(lesson) }}
+      </details>
+      {% endfor %}
+    </div>
+  </section>
+
+  <script id="port-lessons-data" type="application/json">{{ port_lessons|tojson }}</script>
+
+  <aside class="assistant-dock is-minimized" id="assistant-dock" aria-label="Port a Potty assistant">
+    <button type="button" class="assistant-launcher" id="assistant-open" aria-expanded="false" aria-controls="assistant-window">
+      <span class="assistant-launcher-dot" aria-hidden="true"></span>Ask the assistant
+    </button>
+    <div class="assistant-window" id="assistant-window">
+      <button type="button" class="assistant-resize-handle" aria-label="Resize assistant window" title="Drag to resize"></button>
+      <div class="assistant-heading">
+        <div class="assistant-title-row">
+          <strong>Port a Potty Assistant</strong>
+          <button type="button" class="assistant-minimize" id="assistant-minimize" aria-label="Minimize assistant" title="Minimize">–</button>
+        </div>
+        <span class="assistant-subtitle">Ask what a port, finding or setting means</span>
+        <span id="assistant-voice-status" class="assistant-voice-status">Type a question, or use your voice with ElevenLabs.</span>
+        <div id="assistant-voice-indicator" class="assistant-voice-indicator" role="status" hidden>
+          <span class="voice-state-dot" aria-hidden="true"></span><span id="assistant-voice-state">Listening</span>
+        </div>
       </div>
+      <div id="assistant-messages" class="assistant-messages" aria-live="polite">
+        <p class="assistant-message">Try: "Why is port 445 dangerous?" or "What does brute force mean?"</p>
+      </div>
+      <form id="assistant-form" class="assistant-form">
+        <div class="assistant-input-row">
+          <input id="assistant-input" name="question" maxlength="1200" autocomplete="off"
+                 placeholder="Ask about a finding..." aria-label="Question for the assistant" required>
+          <button type="submit">Send</button>
+        </div>
+        <div class="assistant-voice-controls">
+          <button type="button" id="assistant-dictate" class="assistant-dictate" title="Dictate text with ElevenLabs">Dictate</button>
+          <button type="button" id="assistant-talk" class="assistant-talk" aria-pressed="false" title="Start conversation mode">Conversation</button>
+          <button type="button" id="assistant-text-mode" class="assistant-text-mode" hidden>Back to text</button>
+          <button type="button" id="assistant-stop-voice" class="assistant-stop-voice" disabled>Stop voice</button>
+        </div>
+      </form>
     </div>
-    <div id="assistant-messages" class="assistant-messages" aria-live="polite">
-      <p class="assistant-message">Ask what an alert means or how to remediate it.</p>
-    </div>
-    <form id="assistant-form" class="assistant-form">
-      <input id="assistant-input" name="question" maxlength="1200" autocomplete="off"
-             placeholder="Ask about a finding..." aria-label="Question for the assistant" required>
-      <button type="submit">Send</button>
-      <button type="button" id="assistant-dictate" class="assistant-dictate">Dictate text with ElevenLabs</button>
-      <button type="button" id="assistant-talk" class="assistant-talk" aria-pressed="false">Start conversation mode</button>
-      <button type="button" id="assistant-text-mode" class="assistant-text-mode" hidden>Return to text mode</button>
-      <button type="button" id="assistant-stop-voice" class="assistant-stop-voice" disabled>Stop voice</button>
-    </form>
   </aside>
 </body>
 </html>

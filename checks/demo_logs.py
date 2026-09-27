@@ -49,7 +49,7 @@ def load_demo_log():
     scenario = source.removeprefix("demo:")
     filename, title = SCENARIOS.get(scenario, SCENARIOS[DEFAULT_SCENARIO])
     path = DEMO_LOG_DIR / filename
-    return path.read_text(encoding="utf-8").splitlines(), f"DEMO SCENARIO: {title}", True
+    return path.read_text(encoding="utf-8").splitlines(), f"EXAMPLE FILE: {filename} ({title})", True
 
 
 def load_demo_scenario() -> str:
@@ -72,7 +72,7 @@ def save_demo_scenario(scenario: str) -> None:
 
 
 def log_sources() -> list[tuple[str, str]]:
-    sources = [(f"demo:{key}", f"Demo: {title}") for key, (_, title) in SCENARIOS.items()]
+    sources = [(f"demo:{key}", f"Example: {title} ({filename})") for key, (filename, title) in SCENARIOS.items()]
     sources.extend((f"upload:{item['id']}", f"Uploaded: {item['name']}") for item in _uploads())
     return sources
 

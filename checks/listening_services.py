@@ -23,7 +23,8 @@ from checks.port_scan import RISKY_PORTS
 from checks.system import OS
 
 SCOPE_NOTE = {
-    "Darwin": "Shows programs run by your user; system services need admin rights to list.",
+    "Darwin": "Names programs run by your user; macOS hides system services' names without admin rights, "
+              "so those are identified by the Sharing setting that opens their port.",
     "Windows": "Shows all listening programs; some system process names need admin rights.",
     "Linux": "Program names need root to read; ports and exposure are always shown.",
 }
@@ -68,6 +69,7 @@ class ListeningServicesCheck(Check):
                 continue
 
             reach = EXPOSED_TEXT if exposed else LOCAL_TEXT
+            unrecognized = "" if command == "?" else f"Unrecognized program “{command}”."
             if info["known"]:
                 counts["info"] += 1
                 item = {"label": label, "status": "info",
@@ -76,11 +78,11 @@ class ListeningServicesCheck(Check):
                 counts["review"] += 1
                 item = {"label": label, "status": "review",
                         "detail": _sentence(
-                            f"Unrecognized program “{command}”.", info["what"], reach,
+                            unrecognized, info["what"], reach,
                             "If you don't know what it is, look up the program name or close the port.")}
             else:
                 item = {"label": label, "status": "ok",
-                        "detail": _sentence(f"Unrecognized program “{command}”.", info["what"], reach,
+                        "detail": _sentence(unrecognized, info["what"], reach,
                                             "Low risk, since other devices can't connect.")}
 
             if exposed:
