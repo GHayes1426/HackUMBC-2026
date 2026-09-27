@@ -41,9 +41,10 @@ def register(cls):
     return cls
 
 
-def run_all():
+def run_all(names=None):
     """
-    Run every registered check and return a list of result dicts,
+    Run every registered check (or only those whose NAME is in names) and
+    return a list of result dicts,
     each extended with the check's name and description so the
     template can render a panel without knowing about Check classes.
 
@@ -52,6 +53,8 @@ def run_all():
     """
     results = []
     for cls in REGISTRY:
+        if names is not None and cls.NAME not in names:
+            continue
         try:
             result = cls().run()
         except Exception as exc:

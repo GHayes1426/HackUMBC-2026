@@ -16,7 +16,19 @@ let assistantSpeechGenerating = false;
 const AGENT_PAIRING_STORAGE_KEY = "portAPottyAgentDeviceId";
 const AGENT_PACKAGE_STORAGE_KEY = "portAPottyAgentPackageId";
 const AGENT_COLLAPSED_STORAGE_KEY = "portAPottyAgentSetupCollapsed";
-const DETECTION_COLLAPSED_STORAGE_KEY = "portAPottyDetectionThresholdsCollapsed";
+const ASSISTANT_MINIMIZED_STORAGE_KEY = "portAPottyAssistantMinimized";
+
+// localStorage can throw in private windows or with blocked site data; the
+// page must still work, just without remembering these small preferences.
+function readSetting(key) {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+function writeSetting(key, value) {
+  try { localStorage.setItem(key, value); } catch { /* not remembered */ }
+}
+function removeSetting(key) {
+  try { localStorage.removeItem(key); } catch { /* not remembered */ }
+}
 
 function setReadAloudButtonsDisabled(disabled, label = "Read aloud with ElevenLabs") {
   document.querySelectorAll(".assistant-read-answer").forEach((button) => {
@@ -71,7 +83,6 @@ async function refresh() {
     if (!response.ok) throw new Error(`Rescan failed (${response.status})`);
     const page = new DOMParser().parseFromString(await response.text(), "text/html");
     main.replaceChildren(...page.getElementById("dashboard").childNodes);
-    setupDetectionCollapse();
     window.portAPottyRefreshHelper?.();
   } finally {
     main.classList.remove("refreshing");
@@ -114,28 +125,6 @@ async function portAction(button) {
   toast(data.message, data.level || "success");
 }
 
-async function saveDetectionSettings(form) {
-  const values = Object.fromEntries(new FormData(form));
-  const payload = Object.fromEntries(Object.entries(values).map(([name, value]) => [name, Number(value)]));
-  const button = form.querySelector("button[type=submit]");
-  button.disabled = true;
-  try {
-    const response = await fetch("/api/settings/detection", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Dashboard": "1" },
-      body: JSON.stringify(payload),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || "Couldn't save thresholds");
-    await refresh();
-    toast("Detection thresholds saved and scan refreshed.", "success");
-  } catch (err) {
-    toast(err.message, "error");
-  } finally {
-    button.disabled = false;
-  }
-}
-
 async function saveLogSource(select) {
   select.disabled = true;
   try {
@@ -147,7 +136,7 @@ async function saveLogSource(select) {
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || "Couldn't change log source");
     await refresh();
-    toast("Log source changed and scan refreshed.", "success");
+    toast("Example log changed and analyzed.", "success");
   } catch (err) {
     toast(err.message, "error");
   } finally {
@@ -192,8 +181,6 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("submit", (event) => {
-  const form = event.target.closest("#detection-settings");
-  if (form) { event.preventDefault(); saveDetectionSettings(form); return; }
   const upload = event.target.closest("#log-upload");
   if (upload) { event.preventDefault(); uploadLog(upload); }
 });
@@ -274,8 +261,8 @@ async function askAssistant(form) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         question,
-        helper_package_id: localStorage.getItem(AGENT_PACKAGE_STORAGE_KEY) || undefined,
-        helper_device_id: localStorage.getItem(AGENT_PAIRING_STORAGE_KEY) || undefined,
+        helper_package_id: readSetting(AGENT_PACKAGE_STORAGE_KEY) || undefined,
+        helper_device_id: readSetting(AGENT_PAIRING_STORAGE_KEY) || undefined,
       }),
     });
     const data = await response.json().catch(() => ({}));
@@ -346,7 +333,7 @@ function setupVoiceInput() {
       dictationRecorder.onstop = async () => {
         dictationStream.getTracks().forEach((track) => track.stop());
         dictate.classList.remove("recording");
-        dictate.textContent = "Dictate text with ElevenLabs";
+        dictate.textContent = "Dictate";
         dictate.disabled = true;
         try {
           setStatus("Transcribing your dictated text with ElevenLabs…");
@@ -367,7 +354,7 @@ function setupVoiceInput() {
       };
       dictationRecorder.start();
       dictate.classList.add("recording");
-      dictate.textContent = "Stop dictation and transcribe";
+      dictate.textContent = "Stop & transcribe";
       setStatus("Dictation is recording. Click again when you finish speaking.");
     } catch (err) {
       const reason = err?.name || "UnknownError";
@@ -449,28 +436,79 @@ function setupVoiceInput() {
   }
   window.portAPottyResumeSpeechMode = () => { if (speechMode) listenForTurn(); };
   window.portAPottySetVoiceState = setVoiceState;
+  // Minimizing the assistant turns the microphone off, so it never listens unseen.
+  window.portAPottyStopVoiceInput = () => {
+    if (dictationRecorder?.state === "recording") dictationRecorder.stop();
+    if (speechMode) stopSpeechMode();
+  };
   button.addEventListener("click", startSpeechMode);
   dictate.addEventListener("click", toggleDictation);
   textMode.addEventListener("click", stopSpeechMode);
 }
 
-function setupAssistantResize() {
-  const dock = document.querySelector(".assistant-dock");
+// The assistant starts minimized to a small button (it's a helper, not the
+// main event) and remembers whether the user opened it.
+function setupAssistantDock() {
+  const dock = document.getElementById("assistant-dock");
+  const panel = document.getElementById("assistant-window");
+  const launcher = document.getElementById("assistant-open");
+  const minimize = document.getElementById("assistant-minimize");
   const handle = document.querySelector(".assistant-resize-handle");
-  if (!dock || !handle) return;
+  if (!dock || !panel || !launcher || !minimize || !handle) return;
+
+  const setMinimized = (minimized, persist = true) => {
+    dock.classList.toggle("is-minimized", minimized);
+    launcher.setAttribute("aria-expanded", String(!minimized));
+    if (minimized) window.portAPottyStopVoiceInput?.();
+    if (persist) writeSetting(ASSISTANT_MINIMIZED_STORAGE_KEY, String(minimized));
+  };
+  setMinimized(readSetting(ASSISTANT_MINIMIZED_STORAGE_KEY) !== "false", false);
+  launcher.addEventListener("click", () => {
+    setMinimized(false);
+    document.getElementById("assistant-input")?.focus();
+  });
+  minimize.addEventListener("click", () => {
+    setMinimized(true);
+    launcher.focus();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !dock.classList.contains("is-minimized") && panel.contains(document.activeElement)) {
+      setMinimized(true);
+      launcher.focus();
+    }
+  });
+
+  // Never let the window be shorter than its heading + controls + a few lines
+  // of messages, so buttons can't be squeezed out of view.
+  const minimumHeight = () => {
+    const heading = panel.querySelector(".assistant-heading");
+    const form = panel.querySelector(".assistant-form");
+    const style = getComputedStyle(panel);
+    const chrome = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) + 20;
+    return Math.ceil((heading?.offsetHeight || 0) + (form?.offsetHeight || 0) + 96 + chrome);
+  };
+  const clampToViewport = () => {
+    if (!panel.style.height) return;
+    const height = Math.min(parseFloat(panel.style.height), window.innerHeight - 32);
+    panel.style.height = `${Math.max(minimumHeight(), height)}px`;
+    if (panel.style.width) panel.style.width = `${Math.min(parseFloat(panel.style.width), window.innerWidth - 32)}px`;
+  };
+  window.addEventListener("resize", clampToViewport);
+
   handle.addEventListener("pointerdown", (event) => {
     if (window.matchMedia("(max-width: 560px)").matches) return;
     event.preventDefault();
     handle.setPointerCapture(event.pointerId);
     const startX = event.clientX;
     const startY = event.clientY;
-    const startWidth = dock.getBoundingClientRect().width;
-    const startHeight = dock.getBoundingClientRect().height;
+    const startWidth = panel.getBoundingClientRect().width;
+    const startHeight = panel.getBoundingClientRect().height;
+    const minHeight = Math.min(minimumHeight(), window.innerHeight - 32);
     const resize = (move) => {
-      const width = Math.max(360, Math.min(window.innerWidth - 32, startWidth - (move.clientX - startX)));
-      const height = Math.max(250, Math.min(window.innerHeight - 32, startHeight - (move.clientY - startY)));
-      dock.style.width = `${width}px`;
-      dock.style.height = `${height}px`;
+      const width = Math.max(340, Math.min(window.innerWidth - 32, startWidth - (move.clientX - startX)));
+      const height = Math.max(minHeight, Math.min(window.innerHeight - 32, startHeight - (move.clientY - startY)));
+      panel.style.width = `${width}px`;
+      panel.style.height = `${height}px`;
     };
     const stop = () => {
       handle.removeEventListener("pointermove", resize);
@@ -483,28 +521,103 @@ function setupAssistantResize() {
   });
 }
 
+// Lessons for "Port <n> ..." findings, embedded by the template (checks/port_lessons.py).
+let portLessons;
+function lessonForLabel(label) {
+  if (portLessons === undefined) {
+    try {
+      portLessons = JSON.parse(document.getElementById("port-lessons-data")?.textContent || "{}");
+    } catch {
+      portLessons = {};
+    }
+  }
+  const match = /^Port (\d{1,5})\b/.exec(label || "");
+  return match ? portLessons[match[1]] : undefined;
+}
+
+// Same markup as the template's lesson_body() macro.
+function lessonDetails(lesson) {
+  const details = document.createElement("details");
+  details.className = "lesson";
+  const summary = document.createElement("summary");
+  summary.textContent = "How attackers use this port";
+  const list = document.createElement("dl");
+  list.className = "lesson-list";
+  for (const [term, text, extra] of [
+    ["How attackers use it", lesson.how],
+    ["Real example", lesson.example],
+    ["Think of it like this", lesson.analogy],
+    ["How to keep it closed", lesson.protect, "lesson-protect"],
+  ]) {
+    const row = document.createElement("div");
+    if (extra) row.className = extra;
+    const dt = document.createElement("dt");
+    dt.textContent = term;
+    const dd = document.createElement("dd");
+    dd.textContent = text;
+    row.append(dt, dd);
+    list.append(row);
+  }
+  details.append(summary, list);
+  return details;
+}
+
+// "windows" | "mac" | "ios" | "android" | "other", from what the browser reports.
+function detectDevice() {
+  const agent = navigator.userAgent || "";
+  const platform = navigator.userAgentData?.platform || navigator.platform || "";
+  if (/android/i.test(agent)) return "android";
+  if (/iphone|ipad|ipod/i.test(agent)) return "ios";
+  // iPadOS reports itself as a Mac but has a touch screen.
+  if (/mac/i.test(platform) && navigator.maxTouchPoints > 1) return "ios";
+  if (/mac/i.test(platform) || /macintosh/i.test(agent)) return "mac";
+  if (/win/i.test(platform) || /windows/i.test(agent)) return "windows";
+  return "other";
+}
+
 function setupLocalHelper() {
   const form = document.getElementById("agent-pairing");
   const input = document.getElementById("agent-device-id");
   const refreshButton = document.getElementById("agent-refresh");
   const toggleButton = document.getElementById("agent-toggle");
   const panel = document.getElementById("agent-panel");
-  const downloadButton = document.getElementById("agent-download");
+  const downloadButtons = [...document.querySelectorAll(".agent-download")];
   const status = document.getElementById("agent-status");
-  if (!form || !input || !refreshButton || !downloadButton || !toggleButton || !panel || !status) return;
+  const macSteps = document.getElementById("mac-steps");
+  if (!form || !input || !refreshButton || !downloadButtons.length || !toggleButton || !panel || !status) return;
   const containers = () => ({
     primary: document.getElementById("agent-results-primary"),
     secondary: document.getElementById("agent-results-secondary"),
   });
 
-  input.value = localStorage.getItem(AGENT_PAIRING_STORAGE_KEY) || "";
+  // Put this computer's download first; on phones, point to the no-download check.
+  const device = detectDevice();
+  const phoneNote = document.getElementById("agent-phone-note");
+  if (phoneNote) phoneNote.hidden = !(device === "ios" || device === "android");
+  for (const button of downloadButtons) {
+    const mine = button.dataset.platform === device;
+    button.classList.toggle("is-secondary", !mine && (device === "windows" || device === "mac"));
+    if (mine) button.parentElement.prepend(button);
+  }
+  document.getElementById("mac-copy")?.addEventListener("click", async (event) => {
+    const command = document.getElementById("mac-command")?.textContent || "";
+    try {
+      await navigator.clipboard.writeText(command);
+      event.target.textContent = "Copied";
+    } catch {
+      event.target.textContent = "Select and copy";
+    }
+    setTimeout(() => { event.target.textContent = "Copy"; }, 2000);
+  });
+
+  input.value = readSetting(AGENT_PAIRING_STORAGE_KEY) || "";
   const setCollapsed = (collapsed, persist = true) => {
     panel.classList.toggle("is-collapsed", collapsed);
     toggleButton.setAttribute("aria-expanded", String(!collapsed));
     toggleButton.textContent = collapsed ? "Expand setup" : "Collapse setup";
-    if (persist) localStorage.setItem(AGENT_COLLAPSED_STORAGE_KEY, String(collapsed));
+    if (persist) writeSetting(AGENT_COLLAPSED_STORAGE_KEY, String(collapsed));
   };
-  setCollapsed(localStorage.getItem(AGENT_COLLAPSED_STORAGE_KEY) === "true", false);
+  setCollapsed(readSetting(AGENT_COLLAPSED_STORAGE_KEY) === "true", false);
   const setStatus = (message) => { status.textContent = message; };
   const statusTag = (level) => {
     const safeLevel = STATUS_TAGS[level] ? level : "error";
@@ -556,6 +669,8 @@ function setupLocalHelper() {
         detail.className = "detail";
         detail.textContent = item.detail || "";
         row.append(label, detail);
+        const lesson = lessonForLabel(item.label);
+        if (lesson) row.append(lessonDetails(lesson));
         list.append(row);
       }
       card.append(head, description, summary, list);
@@ -564,19 +679,21 @@ function setupLocalHelper() {
       (result.name === "System Hardening" ? secondary : primary).append(card);
     }
   };
-  const load = async () => {
+  let waitTimer;
+  const stopWaiting = () => { clearInterval(waitTimer); waitTimer = undefined; };
+  const load = async ({ quiet = false } = {}) => {
     const deviceId = input.value.trim();
-    const packageId = localStorage.getItem(AGENT_PACKAGE_STORAGE_KEY);
+    const packageId = readSetting(AGENT_PACKAGE_STORAGE_KEY);
     if (!deviceId && !packageId) {
       setStatus("Download the ready-to-run helper, or paste a pairing ID from an existing helper.");
       const { primary, secondary } = containers();
       primary?.replaceChildren();
       secondary?.replaceChildren();
-      return;
+      return false;
     }
     refreshButton.disabled = true;
     refreshButton.textContent = "Refreshing…";
-    setStatus("Checking for the latest local scan…");
+    if (!quiet) setStatus("Checking for the latest local scan…");
     try {
       const endpoint = deviceId
         ? `/api/agent/scan/${encodeURIComponent(deviceId)}`
@@ -584,71 +701,121 @@ function setupLocalHelper() {
       const response = await fetch(endpoint, { cache: "no-store" });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || `Could not load scan (${response.status}).`);
-      localStorage.setItem(AGENT_PAIRING_STORAGE_KEY, deviceId);
+      writeSetting(AGENT_PAIRING_STORAGE_KEY, deviceId);
+      stopWaiting();
+      if (macSteps) macSteps.hidden = true;
       render(data);
+      return true;
     } catch (err) {
-      const { primary, secondary } = containers();
-      primary?.replaceChildren();
-      secondary?.replaceChildren();
-      setStatus(err.message || "Could not load the local helper scan.");
+      if (!quiet) {
+        const { primary, secondary } = containers();
+        primary?.replaceChildren();
+        secondary?.replaceChildren();
+        setStatus(err.message || "Could not load the local helper scan.");
+      }
+      return false;
     } finally {
       refreshButton.disabled = false;
       refreshButton.textContent = "Refresh local scan";
     }
   };
+  // After a download, check every 10 seconds (for up to 15 minutes) so the
+  // results appear on their own once the helper sends its first scan.
+  const waitForFirstScan = () => {
+    stopWaiting();
+    const started = Date.now();
+    waitTimer = setInterval(() => {
+      if (Date.now() - started > 15 * 60 * 1000) { stopWaiting(); return; }
+      load({ quiet: true });
+    }, 10000);
+  };
   form.addEventListener("submit", (event) => { event.preventDefault(); load(); });
-  refreshButton.addEventListener("click", load);
+  refreshButton.addEventListener("click", () => load());
   toggleButton.addEventListener("click", () => setCollapsed(!panel.classList.contains("is-collapsed")));
-  downloadButton.addEventListener("click", async () => {
-    downloadButton.disabled = true;
-    downloadButton.textContent = "Preparing download…";
-    setStatus("Creating a device-scoped helper package…");
-    try {
-      const response = await fetch("/api/agent/package", {
-        method: "POST",
-        headers: { "X-Dashboard": "1" },
-      });
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || "Could not create the helper package.");
+  for (const downloadButton of downloadButtons) {
+    const platform = downloadButton.dataset.platform;
+    const idleLabel = downloadButton.textContent;
+    downloadButton.addEventListener("click", async () => {
+      downloadButton.disabled = true;
+      downloadButton.textContent = "Preparing download…";
+      setStatus("Creating a device-scoped helper package…");
+      try {
+        const response = await fetch(`/api/agent/package?platform=${encodeURIComponent(platform)}`, {
+          method: "POST",
+          headers: { "X-Dashboard": "1" },
+        });
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          throw new Error(data.error || "Could not create the helper package.");
+        }
+        const packageId = response.headers.get("X-Port-A-Potty-Package-ID");
+        if (!packageId) throw new Error("The server did not return a package ID.");
+        const blob = await response.blob();
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = platform === "mac" ? "Port-a-Potty-Mac-Helper.zip" : "Port-a-Potty-Local-Helper.zip";
+        document.body.append(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+        writeSetting(AGENT_PACKAGE_STORAGE_KEY, packageId);
+        removeSetting(AGENT_PAIRING_STORAGE_KEY);
+        input.value = "";
+        if (macSteps) macSteps.hidden = platform !== "mac";
+        setStatus(platform === "mac"
+          ? "Downloaded. Run the helper using the steps above; your results will appear here automatically after its first scan."
+          : "Downloaded. Extract the ZIP and double-click Port-a-Potty-Helper.exe; your results will appear here automatically after its first scan.");
+        waitForFirstScan();
+      } catch (err) {
+        setStatus(err.message || "Could not download the local helper.");
+      } finally {
+        downloadButton.disabled = false;
+        downloadButton.textContent = idleLabel;
       }
-      const packageId = response.headers.get("X-Port-A-Potty-Package-ID");
-      if (!packageId) throw new Error("The server did not return a package ID.");
-      const blob = await response.blob();
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.download = "Port-a-Potty-Local-Helper.zip";
-      document.body.append(link);
-      link.click();
-      link.remove();
-      setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-      localStorage.setItem(AGENT_PACKAGE_STORAGE_KEY, packageId);
-      localStorage.removeItem(AGENT_PAIRING_STORAGE_KEY);
-      input.value = "";
-      setStatus("Downloaded. Extract the ZIP and double-click Port-a-Potty-Helper.exe; this panel will connect automatically after its first scan.");
-    } catch (err) {
-      setStatus(err.message || "Could not download the local helper.");
-    } finally {
-      downloadButton.disabled = false;
-      downloadButton.textContent = "Download ready-to-run Windows helper";
-    }
-  });
+    });
+  }
   window.portAPottyRefreshHelper = load;
-  if (input.value || localStorage.getItem(AGENT_PACKAGE_STORAGE_KEY)) load();
+  if (input.value || readSetting(AGENT_PACKAGE_STORAGE_KEY)) load();
 }
 
-function setupDetectionCollapse() {
-  const panel = document.getElementById("detection-panel");
-  const button = document.getElementById("detection-toggle");
-  if (!panel || !button) return;
-  const setCollapsed = (collapsed, persist = true) => {
-    panel.classList.toggle("is-collapsed", collapsed);
-    button.setAttribute("aria-expanded", String(!collapsed));
-    button.textContent = collapsed ? "Expand thresholds" : "Collapse thresholds";
-    if (persist) localStorage.setItem(DETECTION_COLLAPSED_STORAGE_KEY, String(collapsed));
+// "Check this device": pick the visitor's device tab and count ticked steps.
+function setupDeviceCheck() {
+  const section = document.getElementById("device-check");
+  if (!section) return;
+  const tabs = [...section.querySelectorAll(".device-tab")];
+  const guides = [...section.querySelectorAll(".device-guide")];
+  const select = (device, focus = false) => {
+    for (const tab of tabs) {
+      const selected = tab.dataset.device === device;
+      tab.setAttribute("aria-selected", String(selected));
+      tab.tabIndex = selected ? 0 : -1;
+      if (selected && focus) tab.focus();
+    }
+    for (const guide of guides) guide.hidden = guide.dataset.device !== device;
   };
-  setCollapsed(localStorage.getItem(DETECTION_COLLAPSED_STORAGE_KEY) === "true", false);
-  button.addEventListener("click", () => setCollapsed(!panel.classList.contains("is-collapsed")));
+  const detected = detectDevice();
+  select(tabs.some((tab) => tab.dataset.device === detected) ? detected : tabs[0]?.dataset.device);
+  for (const tab of tabs) {
+    tab.addEventListener("click", () => select(tab.dataset.device));
+    tab.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+      const step = event.key === "ArrowRight" ? 1 : -1;
+      const next = tabs[(tabs.indexOf(tab) + step + tabs.length) % tabs.length];
+      select(next.dataset.device, true);
+    });
+  }
+  section.addEventListener("change", (event) => {
+    const guide = event.target.closest(".device-guide");
+    if (!guide) return;
+    const checks = [...guide.querySelectorAll(".device-step-check")];
+    const done = checks.filter((check) => check.checked).length;
+    const progress = guide.querySelector(".device-progress");
+    if (progress) {
+      progress.textContent = done === checks.length
+        ? `All ${checks.length} steps done. Nice work: fewer open doors on this device.`
+        : `${done} of ${checks.length} steps done`;
+    }
+  });
 }
 
 document.addEventListener("submit", (event) => {
@@ -657,6 +824,6 @@ document.addEventListener("submit", (event) => {
 });
 
 setupVoiceInput();
-setupAssistantResize();
+setupAssistantDock();
 setupLocalHelper();
-setupDetectionCollapse();
+setupDeviceCheck();
