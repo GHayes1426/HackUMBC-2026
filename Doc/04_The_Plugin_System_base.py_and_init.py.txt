@@ -1,0 +1,212 @@
+===========================================================================
+ 04  THE PLUGIN SYSTEM  -  checks/base.py and checks/__init__.py
+     How the app runs every check without app.py knowing what they are
+===========================================================================
+
+THE IDEA: PLUGINS
+-----------------
+A plugin is a self-contained add-on that snaps into a bigger program.
+Think of a power strip: the strip doesn't care whether you plug in a
+lamp or a phone charger, as long as the plug has the right shape.
+
+Here:
+  * the power strip  = base.py's run_all() and the HTML template
+  * the plug shape   = the Check class and the result "contract"
+  * the devices      = port_scan.py, listening_services.py,
+                       ioc_analyzer.py, hardening.py
+
+That's why the README says "the app grows by adding files, not by
+rewriting existing code". To add a check you never touch app.py or
+index.html.
+
+
+checks/base.py, PIECE BY PIECE
+------------------------------
+
+--- The contract (docstring at the top) ------------------------------
+
+    Result contract returned by Check.run():
+        {
+            "status":  <status>,           # overall: the worst item status
+            "summary": "Short headline",
+            "items":   [{"label": str, "status": <status>, "detail": str}, ...],
+            "note":    "optional small print under the summary",
+        }
+
+This is the "shape of the plug". Every check must return a dictionary
+exactly like this. Items may also carry an optional "action" (a
+Close/Reopen button) and the whole result may carry an optional
+"chart". The five statuses (warning/review/info/ok/error) are listed
+right below it.
+
+
+--- The registry ------------------------------------------------------
+
+    REGISTRY = []
+
+An empty list. It will hold every check class. Like a sign-up sheet on
+a clipboard.
+
+
+--- The base class ----------------------------------------------------
+
+    class Check:
+        NAME = "Unnamed check"
+        DESCRIPTION = ""
+
+        def run(self):
+            """Perform the check and return a result dict (see module docstring)."""
+            raise NotImplementedError
+
+The blueprint every check builds on. It promises that every check has
+a NAME, a DESCRIPTION and a run() method. If someone forgets to write
+their own run(), this one raises NotImplementedError, i.e. "you forgot
+to fill this in".
+
+
+--- The register decorator ------------------------------------------
+
+    def register(cls):
+        """Class decorator: add a Check subclass to the dashboard."""
+        REGISTRY.append(cls)
+        return cls
+
+This is what  @register  does above each check class. Python
+effectively runs:
+
+    class PortScanCheck(Check): ...
+    PortScanCheck = register(PortScanCheck)
+
+register adds the class to the sign-up sheet and hands it back
+unchanged. (cls is short for "class"; class is a reserved word so it
+can't be used as a name.)
+
+
+--- run_all(): the loop that runs everything ------------------------
+
+    def run_all():
+        results = []
+        for cls in REGISTRY:
+            try:
+                result = cls().run()
+            except Exception as exc:
+                result = {
+                    "status": "error",
+                    "summary": f"Check failed: {exc}",
+                    "items": [],
+                }
+            results.append({"name": cls.NAME, "description": cls.DESCRIPTION, **result})
+        return results
+
+Line by line:
+  * results = []              start an empty list of answers
+  * for cls in REGISTRY:      for each check on the sign-up sheet...
+  * cls()                     build one object from the class blueprint
+  * .run()                    ...and run it, getting its result dict
+  * try / except Exception    if the check crashes for ANY reason, don't
+                              let it take down the whole page; instead
+                              make a gray "error" result saying why.
+                              This is called ERROR ISOLATION. One broken
+                              check = one gray panel, not a broken site.
+  * {"name": ..., "description": ..., **result}
+        builds a new dictionary with the name and description PLUS
+        everything in result. The ** means "unpack all of result's
+        keys into here". Example:
+
+            result = {"status": "ok", "summary": "All good", "items": []}
+            {"name": "X", **result}
+            # -> {"name": "X", "status": "ok", "summary": "All good", "items": []}
+
+        The template needs the name for the panel heading, so we
+        attach it here.
+  * return results            hand the finished list to app.py.
+
+
+checks/__init__.py: THE LIST OF CHECKS
+--------------------------------------
+
+    from checks import port_scan  # noqa: F401
+    from checks import listening_services  # noqa: F401
+    from checks import ioc_analyzer  # noqa: F401
+    from checks import hardening  # noqa: F401
+
+A file named __init__.py turns a folder into a PACKAGE (a group of
+modules Python can import). It runs automatically the first time
+anything in the folder is imported, which app.py triggers with
+import checks.
+
+Each line imports one check file. Importing a file RUNS it top to
+bottom, which defines its class, which triggers its @register, which
+puts it on the sign-up sheet. The ORDER of these lines is the order of
+the panels on the page.
+
+So the full chain when the server starts is:
+
+    app.py:  import checks
+      -> runs checks/__init__.py
+         -> imports port_scan.py
+            -> defines class PortScanCheck, @register adds it to REGISTRY
+         -> imports listening_services.py   (same thing)
+         -> imports ioc_analyzer.py         (same thing)
+         -> imports hardening.py            (same thing)
+    REGISTRY is now [PortScanCheck, ListeningServicesCheck,
+                     IOCAnalyzerCheck, HardeningCheck]
+
+And on every page load:
+
+    dashboard()  ->  run_all()  ->  each class's run()  ->  list of results
+
+
+FILES IN checks/ THAT ARE NOT CHECKS
+------------------------------------
+Several files in checks/ are HELPERS, not checks. They don't have
+@register and don't appear as panels; checks use them:
+
+    system.py        run OS commands (doc 09)
+    listeners.py     list programs using the network (doc 09)
+    port_catalog.py  descriptions of known programs/ports (doc 10)
+    signatures.py    data for the IOC analyzer (doc 11)
+    log_parser.py    reads log files (doc 11)
+    detector.py      the detection rules (doc 11)
+    port_control.py  closes/reopens ports (doc 13)
+    summary.py       totals and charts (doc 14)
+
+
+ADDING YOUR OWN CHECK (try it!)
+-------------------------------
+1. Create checks/hello_check.py:
+
+       from checks.base import Check, register
+
+       @register
+       class HelloCheck(Check):
+           NAME = "Hello Check"
+           DESCRIPTION = "My first plugin"
+
+           def run(self):
+               return {
+                   "status": "info",
+                   "summary": "It works!",
+                   "items": [
+                       {"label": "Greeting", "status": "ok", "detail": "Hello, world."},
+                       {"label": "A pretend risk", "status": "warning", "detail": "Just testing red."},
+                   ],
+               }
+
+2. Add one line to checks/__init__.py:
+
+       from checks import hello_check  # noqa: F401
+
+3. Save. The server restarts itself (debug mode). Reload the page:
+   a new panel appears, the summary counts your pretend risk, and the
+   chart gets a new bar. You changed zero lines of app.py or HTML.
+
+4. Make it crash on purpose to see error isolation:
+
+       def run(self):
+           return 1 / 0
+
+   Reload: a gray "Check failed: division by zero" panel appears, and
+   every other panel still works.
+
+Delete the file and the import line when you're done.

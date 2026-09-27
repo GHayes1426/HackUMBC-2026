@@ -1,0 +1,268 @@
+===========================================================================
+ 05  FRONT END PART 1  -  html/index.html  (the page's structure)
+===========================================================================
+
+WHAT IT IS
+----------
+index.html describes WHAT is on the page: headings, lists, tiles,
+buttons. Not how it looks (that's CSS, doc 07) and not what happens on
+a click (that's JavaScript, doc 06).
+
+Analogy for the three front-end languages, using a house:
+    HTML       = the walls, rooms and doors  (structure)
+    CSS        = the paint and furniture     (appearance)
+    JavaScript = the electricity and doorbells (behavior)
+
+This particular file is also a TEMPLATE: it contains {{ }} and {% %}
+blanks that Python fills in before sending it (doc 01, section 6).
+
+
+HTML IN FIVE MINUTES
+--------------------
+HTML is made of TAGS in angle brackets. Most come in pairs, an opening
+tag and a closing tag with a slash, wrapping the content:
+
+    <h1>Network Security Dashboard</h1>      a big heading
+    <p>Some text.</p>                         a paragraph
+    <ul> <li>one</li> <li>two</li> </ul>      a bulleted list of items
+    <button>Close port</button>               a button
+    <span>...</span>                          a small inline piece of text
+    <div>...</div>                            a generic box
+    <section>...</section>                    a box that is a section of the page
+    <a href="/">Rescan</a>                    a link
+
+Tags can have ATTRIBUTES inside the opening tag, name="value":
+
+    <a href="/" id="rescan">Rescan</a>
+        href   where the link goes
+        id     a unique name, so CSS/JavaScript can find this exact element
+    <li class="item status-warning">
+        class  a group name (can have several, separated by spaces);
+               CSS uses classes to decide colors
+    <button data-kind="close" data-port="7000">
+        data-* made-up attributes to stash information for JavaScript
+
+Tags nest inside each other like boxes in boxes. The browser turns
+this nesting into a tree it calls the DOM (Document Object Model).
+JavaScript edits that tree to change the page live.
+
+
+JINJA (THE TEMPLATE LANGUAGE) IN FIVE MINUTES
+---------------------------------------------
+    {{ value }}                     insert a value
+    {{ a if condition else b }}     insert one of two values
+    {% for x in list %} ... {% endfor %}     repeat for each item
+    {% if condition %} ... {% endif %}       include only if true
+    {% set name = value %}          make a variable
+    {# comment #}  or  <!-- HTML comment -->  notes
+
+
+WALKING THROUGH THE FILE
+------------------------
+
+--- The comment at the top ---------------------------------------------
+
+    <!--
+      Dashboard page (Jinja template rendered by app.py's "/" route).
+      Receives:
+        results -- list from checks.base.run_all(); ...
+        summary -- dict from checks.summary.build_summary(results)
+      ...
+      Note: use check["items"], not check.items. On a dict, Jinja resolves
+      .items to the dict's built-in items() method.
+    -->
+
+It says which variables the template receives (the two names app.py
+passes to render_template). The "Note" is a real gotcha: in Jinja
+check.name and check["name"] usually mean the same thing, but "items"
+is also the name of a built-in dictionary method, so check.items would
+give you that method instead of our list. Always write check["items"].
+
+
+--- Icon lookup table --------------------------------------------------
+
+    {% set status_icon = {"warning": "!", "review": "?", "info": "i", "ok": "✓", "error": "–"} %}
+
+A small dictionary made inside the template: status word -> symbol.
+Used for the little circles in each tag, so the status is shown by a
+symbol AND a word AND a color (people who are color-blind still get it).
+
+
+--- The <head>: settings and attachments -------------------------------
+
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <title>Network Security Dashboard</title>
+      <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+      <script src="{{ url_for('static', filename='dashboard.js') }}" defer></script>
+    </head>
+
+The <head> isn't shown on the page; it holds settings.
+  * charset="utf-8"       use the standard text encoding (so ✓ and · work)
+  * viewport              make it fit phone screens properly
+  * <title>               the text on the browser tab
+  * <link rel="stylesheet">  attach the CSS file
+  * <script src=... defer> attach the JavaScript file. "defer" means
+                           "run it after the page is built", so the
+                           buttons exist before the code looks for them.
+  * url_for('static', filename='style.css') is a Flask helper that
+    produces the correct address, "/static/style.css". Using it instead
+    of typing the address means it keeps working if folders change.
+
+
+--- The <body>: the visible page ---------------------------------------
+
+    <header>
+      <h1>Network Security Dashboard</h1>
+      <p>Assessing <code>127.0.0.1</code> &middot; <a href="{{ url_for('dashboard') }}" id="rescan">Rescan</a></p>
+    </header>
+
+The title bar. &middot; is an "HTML entity", a code for the · symbol.
+url_for('dashboard') makes the address of the dashboard() function in
+app.py, which is "/". id="rescan" lets dashboard.js find this link.
+
+    <div id="toasts" class="toasts" aria-live="polite"></div>
+
+An EMPTY box. dashboard.js puts pop-up notifications ("toasts") in it.
+aria-live="polite" tells screen readers (software that reads the page
+aloud for blind users) to announce new messages that appear in here.
+
+    <main id="dashboard">
+
+Everything inside <main> is the part that gets REPLACED when the page
+refreshes itself after a Close/Reopen (doc 06). The id lets JavaScript
+find it.
+
+
+--- The threat summary ------------------------------------------------
+
+    <div class="hero">
+      <span class="hero-value">{{ summary.total }}</span>
+      <span class="hero-label">
+        potential threat{{ "" if summary.total == 1 else "s" }} found
+        ...
+
+The big number. {{ summary.total }} is replaced with e.g. 3. The small
+trick {{ "" if summary.total == 1 else "s" }} writes "threat" for 1 and
+"threats" otherwise.
+
+The color key:
+
+    <dl class="key-list">
+      {% for status, label, meaning in summary.statuses %}
+      <div class="key-row status-{{ status }}">
+        <dt><span class="tag"><span class="tag-icon" aria-hidden="true">{{ status_icon[status] }}</span>{{ label }}</span></dt>
+        <dd>{{ meaning }}</dd>
+      </div>
+      {% endfor %}
+    </dl>
+
+<dl> is a "description list": pairs of <dt> (the term) and <dd> (its
+description). The loop repeats once per status defined in
+checks/summary.py, so the key and the real statuses can never get out
+of sync. Look at class="key-row status-{{ status }}": for the warning
+row it becomes class="key-row status-warning", which CSS colors red.
+aria-hidden="true" tells screen readers to skip the icon (the word
+next to it says the same thing).
+
+The tiles (one per check) and charts follow the same pattern: a loop,
+with {{ }} blanks filled from summary.categories and summary.charts.
+One chart bar:
+
+    <li class="bar-row tone-{{ tone }}" title="{{ bar.label }}: {{ bar.value }}" tabindex="0">
+      <span class="bar-label">{{ bar.label }}</span>
+      <span class="bar-track">
+        <span class="bar-scale"><span class="bar" style="width: {{ bar.pct }}%"></span></span>
+        <span class="bar-value">{{ bar.value }}</span>
+      </span>
+    </li>
+
+The bar is just an empty colored box whose WIDTH is set to a
+percentage calculated in Python (bar.pct). 100% = the biggest value.
+There's no charting library at all: a bar chart is boxes of different
+widths. title="..." shows a tooltip on hover; tabindex="0" lets
+keyboard users Tab to each bar.
+
+
+--- One panel per check ------------------------------------------------
+
+    {% for check in results %}
+    <section class="panel status-{{ check.status }}">
+      <div class="panel-head">
+        <h2>{{ check.name }}</h2>
+        <span class="tag">...{{ summary.tags[check.status] }}</span>
+      </div>
+      <p class="description">{{ check.description }}</p>
+      <p class="summary">{{ check.summary }}</p>
+      {% if check.note %}<p class="note">{{ check.note }}</p>{% endif %}
+
+      <ul class="items">
+        {% for item in check["items"] %}
+        <li class="item status-{{ item.status }}">
+          <span class="tag">...{{ summary.tags[item.status] }}</span>
+          <span class="label">{{ item.label }}</span>
+          <span class="detail">{{ item.detail }}</span>
+          {% if item.action %}
+          <button type="button" class="port-action {{ item.action.kind }}"
+                  data-kind="{{ item.action.kind }}" data-port="{{ item.action.port }}">
+            {{ "Close port" if item.action.kind == "close" else "Reopen port" }}
+          </button>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% else %}
+    <p>No checks registered. Import one in <code>checks/__init__.py</code>.</p>
+    {% endfor %}
+
+This is the plugin system from the front end's point of view. Two
+loops inside each other:
+  * outer loop: one <section> per check result
+  * inner loop: one <li> per item in that check
+  * {% if item.action %}: only items that have an "action" get a button.
+    The button stores the kind and port in data-kind / data-port, which
+    is how dashboard.js later knows what to close.
+  * summary.tags[item.status] turns "warning" into "Risk" etc.
+  * {% else %} on a for loop runs only if the list was empty.
+
+
+A CONCRETE BEFORE/AFTER
+-----------------------
+Template:
+
+    <li class="item status-{{ item.status }}">
+      <span class="label">{{ item.label }}</span>
+
+Python data for one item:
+
+    {"label": "Port 7000 · AirPlay Receiver (macOS) (ControlCenter)",
+     "status": "info", "detail": "Lets iPhones ...",
+     "action": {"kind": "close", "port": 7000}}
+
+What the browser actually receives:
+
+    <li class="item status-info">
+      <span class="label">Port 7000 · AirPlay Receiver (macOS) (ControlCenter)</span>
+
+In the browser, right-click the page -> "View Page Source" to see the
+finished HTML. No {{ }} anywhere: it's all been filled in.
+
+
+SAFETY NOTE: AUTOESCAPING
+-------------------------
+Program names come from your computer, and log lines could come from an
+attacker. What if a program were named <script>evil()</script>? Jinja
+automatically "escapes" every {{ }} value: < becomes &lt; so the
+browser SHOWS the text instead of RUNNING it. This protects against an
+attack called XSS (cross-site scripting). It's on by default in Flask;
+never turn it off for data you didn't write yourself.
+
+
+TRY IT
+------
+1. Change the <h1> text, save, reload the page.
+2. Add under the header:  <p>Made by YOUR NAME</p>
+3. Show how many checks ran: add  <p>{{ results|length }} checks ran</p>
+   (|length is a Jinja "filter" that counts a list).

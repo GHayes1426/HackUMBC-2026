@@ -1,0 +1,3 @@
+Sep 26 12:00:01 portlab sshd[4301]: Accepted publickey for portapotty from 10.0.2.2 port 51001 ssh2
+Sep 26 12:03:21 portlab sshd[4302]: Accepted publickey for portapotty from 10.0.2.2 port 51004 ssh2
+Sep 26 12:10:44 portlab sshd[4303]: Received disconnect from 10.0.2.2 port 51004:11: disconnected by user

@@ -1,0 +1,365 @@
+===========================================================================
+ 02  PYTHON CRASH COURSE
+     Every Python idea used in this project, explained with its real code
+===========================================================================
+
+Python is the language of the back end. You don't need to memorize this
+document; read it once, then come back when a later document uses
+something you've forgotten.
+
+You can try any example yourself. In a terminal type  python3  (Mac) or
+python  (Windows) and press Enter. You get a  >>>  prompt: type a line,
+press Enter, and Python runs it immediately. Type  exit()  to leave.
+
+
+1. VALUES AND VARIABLES
+-----------------------
+A variable is a labeled box. The = sign means "put the right side into
+the box on the left" (NOT "is equal to").
+
+    port = 5000
+    host = "127.0.0.1"
+    is_open = True
+
+Kinds of values ("types"):
+
+    5000            int      whole number
+    0.3             float    number with a decimal point
+    "127.0.0.1"     str      string = text, always in quotes
+    True / False    bool     yes/no
+    None            None     "nothing here"
+
+Real example, checks/port_control.py:30
+
+    DASHBOARD_PORT = 5000  # never closable: it would cut off the dashboard itself
+
+Names in ALL_CAPS are a convention meaning "a setting that never
+changes" (a constant). Python doesn't enforce it; it's a note to humans.
+
+
+2. TEXT (STRINGS) AND F-STRINGS
+-------------------------------
+Put text in quotes. To mix variables INTO text, put an f before the
+quote and the variable inside { }:
+
+    port = 7000
+    message = f"Port {port} closed."
+    # message is now "Port 7000 closed."
+
+Compare it to a fill-in-the-blank sentence. Real example, app.py:64
+
+    level, message = "success", f"Port {port} closed. Use Reopen if something stops working."
+
+Useful string tricks used in the project:
+
+    "Hello".lower()          -> "hello"
+    "a,b,c".split(",")       -> ["a", "b", "c"]
+    ", ".join(["a", "b"])    -> "a, b"
+    "  hi  ".strip()         -> "hi"
+    "Code Helper".startswith("Code")  -> True
+    "on" in "turned on"      -> True     (is this text inside that text?)
+
+
+3. LISTS: AN ORDERED ROW OF THINGS
+----------------------------------
+Square brackets. Like a numbered shopping list.
+
+    ports = [21, 23, 445]
+    ports.append(3389)       # add to the end -> [21, 23, 445, 3389]
+    ports[0]                 # the first item (counting starts at 0!) -> 21
+    len(ports)               # how many -> 4
+
+Real example, checks/log_parser.py:19
+
+    REAL_LOG_PATHS = [Path("/var/log/auth.log"), Path("/var/log/secure")]
+
+
+4. DICTIONARIES: LOOK THINGS UP BY NAME
+---------------------------------------
+Curly braces with  key: value  pairs. Like a real dictionary: look up a
+word (the key), get its definition (the value).
+
+    item = {"label": "Port 21 · FTP", "status": "ok", "detail": "Closed."}
+    item["status"]            # -> "ok"
+    item["status"] = "warning"   # change it
+    item.get("action")        # -> None if there's no "action" key (no error)
+
+Dictionaries are EVERYWHERE in this project, because every check result
+is a dictionary. Real example, checks/port_scan.py:22 is a dictionary
+whose keys are port numbers and whose values are groups of three texts:
+
+    RISKY_PORTS = {
+        21:   ("FTP",    "Transmits credentials in plaintext", "Disable FTP or switch to SFTP/FTPS"),
+        23:   ("Telnet", "Transmits everything in plaintext",  "Disable Telnet; use SSH instead"),
+        ...
+    }
+
+    RISKY_PORTS[23]   # -> ("Telnet", "Transmits everything in plaintext", ...)
+
+
+5. TUPLES AND SETS
+------------------
+TUPLE: like a list but with round brackets and can't be changed. Good
+for a fixed group: ("FTP", "why risky", "what to do").
+
+You can unpack a tuple into several variables at once:
+
+    service, risk, recommendation = ("FTP", "plaintext", "use SFTP")
+    # service = "FTP", risk = "plaintext", recommendation = "use SFTP"
+
+SET: curly braces, no order, no duplicates. Perfect for "which ports are
+open?" because a port is either in the set or not.
+
+    open_ports = {445, 3389}
+    445 in open_ports          # -> True
+    {21, 445} - {445}          # "minus": -> {21}
+    {21} | {445}               # "union" (combine): -> {21, 445}
+
+Real example, checks/port_control.py:56 adds one port to the saved set:
+
+    _apply(ports | {port}, port, closing=True)
+
+
+6. IF / ELIF / ELSE: MAKING DECISIONS
+-------------------------------------
+Like a flowchart diamond. Indentation (the spaces at the start of the
+line) shows which lines belong to which branch. Python is strict about
+this: indentation is not decoration, it's meaning.
+
+    if port in closed_here:
+        status = "ok"           # runs only if the port was closed by us
+    elif port in open_ports:
+        status = "warning"      # else, runs only if it's open
+    else:
+        status = "ok"           # otherwise
+
+Comparisons:  ==  equal,  !=  not equal,  <  >  <=  >=,
+              in  (is it inside?),  not,  and,  or
+
+Real example, app.py:50
+
+    if request.host not in ALLOWED_HOSTS or request.headers.get("X-Dashboard") != "1":
+        abort(403)
+
+Read it out loud: "if the host isn't one we allow, OR the special
+header isn't 1, then refuse (error 403 = forbidden)".
+
+
+7. FOR LOOPS: DO SOMETHING FOR EACH ITEM
+----------------------------------------
+    for port in [21, 23, 445]:
+        print(port)
+    # prints 21, then 23, then 445
+
+Looping over a dictionary with .items() gives key AND value each time.
+Real example, checks/port_scan.py:69
+
+    for port, (service, risk, recommendation) in RISKY_PORTS.items():
+        label = f"Port {port} · {service}"
+
+Each time around: port = 21, service = "FTP", risk = "...", and so on.
+
+A shortcut called a LIST COMPREHENSION builds a list from a loop in one
+line. It reads like English: "the X for each Y in Z if condition".
+
+    [p for p in [21, 23, 445] if p > 22]      # -> [23, 445]
+
+Real example, checks/detector.py:35
+
+    return [
+        {"ip": ip, "count": count, "users": sorted(users_by_ip[ip])}
+        for ip, count in count_failures_by_ip(events).most_common()
+        if count >= threshold
+    ]
+
+"Make a dictionary for each (ip, count), but only if count is at least
+the threshold."
+
+
+8. FUNCTIONS: REUSABLE RECIPES
+------------------------------
+def  defines a function. Inside the brackets are its INPUTS
+("parameters"). return  sends back the OUTPUT.
+
+    def add(a, b):
+        return a + b
+
+    add(2, 3)     # -> 5
+
+Real example, checks/port_scan.py:36
+
+    def _scan_port(host, port, timeout=0.3):
+        """Return True if the port is open on host."""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(timeout)
+            return sock.connect_ex((host, port)) == 0
+
+  * timeout=0.3 is a DEFAULT: if you don't pass a timeout, it's 0.3.
+  * The name starts with _ which is a convention for "private helper,
+    only used inside this file".
+  * The """...""" line is the docstring describing what it does.
+
+A LAMBDA is a tiny unnamed function written in one line:
+    lambda port: _scan_port(host, port)
+means "a function that takes port and returns _scan_port(host, port)".
+
+
+9. IMPORTS: BORROWING CODE FROM OTHER FILES
+-------------------------------------------
+Each .py file is a MODULE. To use something from another module:
+
+    import socket                               # a module built into Python
+    from flask import Flask, render_template    # a library we installed
+    from checks.base import Check, register     # our own file checks/base.py
+
+"from checks.base import run_all" means: go to the folder checks, open
+base.py, and bring in the thing named run_all.
+
+
+10. CLASSES: BLUEPRINTS
+-----------------------
+A CLASS is a blueprint for making things ("objects") that share the same
+parts. Think "the blueprint for a house" vs "a house".
+
+Real example, checks/base.py
+
+    class Check:
+        NAME = "Unnamed check"
+        DESCRIPTION = ""
+
+        def run(self):
+            raise NotImplementedError
+
+And a class that builds on it (INHERITS from it), checks/port_scan.py:58
+
+    class PortScanCheck(Check):
+        NAME = "Local Port Assessor"
+        DESCRIPTION = "Scans localhost for commonly risky open ports"
+
+        def run(self):
+            ...
+
+PortScanCheck(Check) means "a PortScanCheck is a kind of Check". It
+gets everything a Check has, and replaces NAME, DESCRIPTION and run()
+with its own. A function inside a class is called a METHOD, and its
+first input is always self (the object itself). To use it:
+
+    check = PortScanCheck()     # build one object from the blueprint
+    result = check.run()        # ask it to run
+
+
+11. DECORATORS: THE @ LINES
+---------------------------
+A line starting with @ right above a function or class "wraps" it with
+extra behavior. Think of it as a sticker that registers the thing
+somewhere.
+
+    @register
+    class PortScanCheck(Check):
+        ...
+
+means "after defining PortScanCheck, hand it to register()", which adds
+it to the list of checks to run (document 04). And in app.py:
+
+    @app.route("/")
+    def dashboard():
+        ...
+
+means "tell Flask: this function answers requests for /".
+
+
+12. ERRORS: TRY / EXCEPT / RAISE
+--------------------------------
+When something goes wrong, Python "raises an exception" (throws an
+error). If nobody catches it, the program stops. try/except catches it:
+
+    try:
+        text = open("missing.txt").read()     # might fail
+    except OSError:
+        text = ""                             # what to do if it fails
+
+Real example, checks/port_control.py:43
+
+    def closed_ports():
+        try:
+            return set(json.loads(STATE_FILE.read_text()))
+        except (OSError, ValueError):
+            return set()
+
+"Read the saved list of closed ports. If the file doesn't exist
+(OSError) or is garbled (ValueError), just act as if nothing is closed."
+
+raise  throws your own error on purpose:
+
+    raise PortControlError("Invalid port number")
+
+
+13. WITH: OPEN, USE, AND ALWAYS CLEAN UP
+----------------------------------------
+    with socket.socket(...) as sock:
+        ...use sock...
+    # here sock is automatically closed, even if an error happened
+
+Like borrowing a library book with a guarantee it goes back.
+
+
+14. RUNNING OTHER PROGRAMS: subprocess
+--------------------------------------
+Python can run the same commands you'd type in a terminal and read
+their output. This is how we ask the OS about its firewall, programs,
+etc. checks/system.py:
+
+    result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
+    # result.returncode : 0 means success, anything else means failure
+    # result.stdout     : the normal text output
+    # result.stderr     : the error text output
+
+command is a LIST of words, e.g. ["lsof", "-nP", "-iTCP"], which is the
+same as typing  lsof -nP -iTCP  in a terminal.
+
+
+15. PATHS AND FILES
+-------------------
+from pathlib import Path  gives a friendly way to handle file locations.
+
+    Path(__file__)                  # this .py file's own location
+    Path(__file__).resolve().parent # the folder it's in
+    folder / "sample_data" / "sample_auth.log"   # "/" joins folder names
+    path.read_text()                # the whole file as one string
+    path.exists()                   # True/False
+
+Real example, checks/log_parser.py:21
+
+    SAMPLE_LOG_PATH = Path(__file__).resolve().parent.parent / "sample_data" / "sample_auth.log"
+
+"Start at this file (checks/log_parser.py), go up to checks/, up again
+to the project folder, then into sample_data/sample_auth.log." This
+works no matter where the project folder is on the computer.
+
+
+16. if __name__ == "__main__":
+------------------------------
+Found at the bottom of app.py:
+
+    if __name__ == "__main__":
+        app.run(host="127.0.0.1", port=DASHBOARD_PORT, debug=True)
+
+Means "only do this if this file was started directly (python app.py),
+not if some other file imported it". It's the program's START button.
+
+
+17. PRACTICE
+------------
+In the  >>>  prompt, try:
+
+    RISKY = {21: "FTP", 23: "Telnet"}
+    for port, name in RISKY.items():
+        print(f"Port {port} is {name}")
+
+    open_ports = {23}
+    for port in RISKY:
+        status = "OPEN" if port in open_ports else "closed"
+        print(port, status)
+
+The second one uses a one-line if:  A if condition else B.
+If you can read those, you can read most of this project.

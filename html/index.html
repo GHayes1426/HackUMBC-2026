@@ -20,19 +20,88 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Network Security Dashboard</title>
+  <title>Port a Potty</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <script src="{{ url_for('static', filename='dashboard.js') }}" defer></script>
 </head>
 <body>
   <header>
-    <h1>Network Security Dashboard</h1>
+    <h1>Port a Potty</h1>
     <p>Assessing <code>127.0.0.1</code> &middot; <a href="{{ url_for('dashboard') }}" id="rescan">Rescan</a></p>
   </header>
 
   <div id="toasts" class="toasts" aria-live="polite"></div>
 
+  <section class="agent-panel" id="agent-panel" aria-labelledby="agent-title">
+    <div class="panel-head">
+      <h2 id="agent-title">Local device helper</h2>
+      <span class="tag"><span class="tag-icon" aria-hidden="true">↗</span>OPTIONAL</span>
+      <div class="helper-panel-actions">
+        <button type="button" id="agent-refresh" class="agent-refresh">Refresh local scan</button>
+        <button type="button" id="agent-toggle" class="agent-toggle" aria-expanded="true">Collapse setup</button>
+      </div>
+    </div>
+    <div class="agent-setup-body">
+      <p class="description">Run the downloadable helper on a computer to show its local Port Assessor, Listening Services, and System Hardening results here.</p>
+      <button type="button" id="agent-download" class="save-settings agent-download">Download ready-to-run Windows helper</button>
+      <p class="muted agent-download-note">Downloads a ZIP containing the EXE and its device-scoped connection file. Extract it, then double-click the EXE.</p>
+      <form id="agent-pairing" class="agent-pairing">
+        <label>Manual helper pairing ID
+          <input id="agent-device-id" name="device_id" maxlength="128" autocomplete="off" placeholder="Paste the ID printed by Port a Potty Helper" aria-describedby="agent-status">
+        </label>
+        <button type="submit" class="save-settings">Connect helper</button>
+      </form>
+      <p id="agent-status" class="agent-status" role="status">Download the helper to connect automatically, or paste an existing helper pairing ID.</p>
+    </div>
+  </section>
+
   <main id="dashboard">
+
+    <section class="settings-panel" id="detection-panel" aria-labelledby="settings-title">
+      <div class="panel-head">
+        <div>
+          <h2 id="settings-title">Detection thresholds</h2>
+          <span class="settings-summary-copy">Tune alert sensitivity and choose a simulated or uploaded log.</span>
+        </div>
+        <button type="button" id="detection-toggle" class="agent-toggle" aria-expanded="true">Collapse thresholds</button>
+      </div>
+      <div class="settings-content">
+      <p class="description">Tune how many failed logins trigger an alert. Changes apply to the next scan on this device.</p>
+      <label class="scenario-picker">Log source
+        <select id="log-source">
+          {% for source, title in log_sources %}
+          <option value="{{ source }}"{{ " selected" if source == selected_log_source }}>{{ title }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <form id="log-upload" class="upload-form" enctype="multipart/form-data">
+        <label>Upload a log file <input name="log_file" type="file" accept=".log,.txt,text/plain" required></label>
+        <button type="submit" class="save-settings">Upload and analyze</button>
+        <span class="muted">UTF-8 .log or .txt, up to 512 KB. Your newest 8 uploads stay available.</span>
+      </form>
+      <form id="detection-settings" class="settings-form">
+        <label>Brute-force failures
+          <input name="brute_force_failures" type="number" min="1" required value="{{ detection_settings.brute_force_failures }}">
+        </label>
+        <label>Brute-force window (seconds)
+          <input name="brute_force_window_seconds" type="number" min="1" required value="{{ detection_settings.brute_force_window_seconds }}">
+        </label>
+        <label>Password-spray accounts
+          <input name="password_spray_accounts" type="number" min="1" required value="{{ detection_settings.password_spray_accounts }}">
+        </label>
+        <label>Password-spray window (seconds)
+          <input name="password_spray_window_seconds" type="number" min="1" required value="{{ detection_settings.password_spray_window_seconds }}">
+        </label>
+        <label>Maximum attempts per sprayed account
+          <input name="password_spray_max_attempts_per_account" type="number" min="1" required value="{{ detection_settings.password_spray_max_attempts_per_account }}">
+        </label>
+        <label>Alert cooldown (seconds)
+          <input name="alert_cooldown_seconds" type="number" min="1" required value="{{ detection_settings.alert_cooldown_seconds }}">
+        </label>
+        <button type="submit" class="save-settings">Save thresholds</button>
+      </form>
+      </div>
+    </section>
 
     <section class="overview" aria-labelledby="overview-title">
       <h2 id="overview-title">Threat summary</h2>
@@ -94,6 +163,8 @@
       </div>
     </section>
 
+    <div id="agent-results-primary" class="agent-results" aria-live="polite"></div>
+
     {% for check in results %}
     <section class="panel status-{{ check.status }}">
       <div class="panel-head">
@@ -123,6 +194,32 @@
     {% else %}
     <p>No checks registered. Import one in <code>checks/__init__.py</code>.</p>
     {% endfor %}
+
+    <div id="agent-results-secondary" class="agent-results" aria-live="polite"></div>
   </main>
+
+  <aside class="assistant-dock" aria-label="Port a Potty assistant">
+    <button type="button" class="assistant-resize-handle" aria-label="Resize assistant window" title="Drag to resize"></button>
+    <div class="assistant-heading">
+      <strong>Port a Potty Assistant</strong>
+      <span>ElevenLabs voice assistant for the current log findings</span>
+      <span id="assistant-voice-status" class="assistant-voice-status">Dictate one message or start Conversation mode to enable your microphone.</span>
+      <div id="assistant-voice-indicator" class="assistant-voice-indicator" role="status" hidden>
+        <span class="voice-state-dot" aria-hidden="true"></span><span id="assistant-voice-state">Listening</span>
+      </div>
+    </div>
+    <div id="assistant-messages" class="assistant-messages" aria-live="polite">
+      <p class="assistant-message">Ask what an alert means or how to remediate it.</p>
+    </div>
+    <form id="assistant-form" class="assistant-form">
+      <input id="assistant-input" name="question" maxlength="1200" autocomplete="off"
+             placeholder="Ask about a finding..." aria-label="Question for the assistant" required>
+      <button type="submit">Send</button>
+      <button type="button" id="assistant-dictate" class="assistant-dictate">Dictate text with ElevenLabs</button>
+      <button type="button" id="assistant-talk" class="assistant-talk" aria-pressed="false">Start conversation mode</button>
+      <button type="button" id="assistant-text-mode" class="assistant-text-mode" hidden>Return to text mode</button>
+      <button type="button" id="assistant-stop-voice" class="assistant-stop-voice" disabled>Stop voice</button>
+    </form>
+  </aside>
 </body>
 </html>

@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "port-a-potty"
+version = "0.1.0"
+description = "Port a Potty local security event monitor and voice-assisted incident analyzer"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "HackUMBC 2026 Team" }]
+dependencies = [
+    "flask>=3.0,<4",
+    "psycopg[binary]>=3.2,<4",
+    "python-dotenv>=1.0,<2",
+]
+
+[project.scripts]
+port-a-potty = "dawgwatch.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

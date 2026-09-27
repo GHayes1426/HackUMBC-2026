@@ -1,0 +1,266 @@
+===========================================================================
+ 03  app.py  -  THE BACK-END SERVER (the front door of the whole app)
+===========================================================================
+
+WHAT IT IS
+----------
+app.py is the file you start (python app.py). It is the SERVER: it
+waits for the browser to ask for something and decides who in the
+project should answer. It's short (about 70 lines) because its only job
+is directing traffic; the real work lives in the checks/ folder.
+
+Analogy: a hotel receptionist. Guests (requests) arrive at the desk;
+the receptionist doesn't clean rooms or cook, but knows exactly which
+department handles each request, and hands back the answer.
+
+
+THE LIBRARY IT USES: FLASK
+--------------------------
+Writing a web server from scratch means handling network connections,
+reading the raw text of HTTP requests, and formatting responses.
+Flask is a library that does all of that for us. We just say "when
+someone asks for THIS address, run THIS function".
+
+It's installed with  pip install -r requirements.txt  (see doc 15).
+
+
+WALKING THROUGH THE FILE
+------------------------
+
+--- Lines 1-14: the docstring ---------------------------------------
+
+    GET  /                          -> runs every check, renders html/index.html
+    GET  /api/scan                  -> same results (plus summary) as JSON
+    POST /api/ports/<port>/close    -> firewall-block a port (checks/port_control.py)
+    POST /api/ports/<port>/reopen   -> remove that block
+
+A summary for humans: the four addresses ("routes") this server answers.
+Think of it as the receptionist's list of services.
+
+
+--- Lines 16-21: imports ---------------------------------------------
+
+    from flask import Flask, abort, jsonify, render_template, request
+
+    import checks  # noqa: F401  -- importing the package registers every check
+    from checks.base import run_all
+    from checks.port_control import DASHBOARD_PORT, PortControlError, close_port, is_blocked, reopen_port
+    from checks.summary import build_summary
+
+  * From Flask we borrow:
+      Flask            the server itself
+      abort            stop and send an error code
+      jsonify          turn Python data into JSON text
+      render_template  fill in an HTML template
+      request          information about the incoming request
+
+  * import checks  looks like it does nothing, but it's crucial:
+    importing the checks folder runs checks/__init__.py, which imports
+    each check file, and each check registers itself (doc 04). The
+    comment "# noqa: F401" tells code-checking tools "yes, I know this
+    looks unused; it's on purpose".
+
+  * The rest brings in the functions this file calls.
+
+
+--- Lines 23-28: creating the server ---------------------------------
+
+    app = Flask(
+        __name__,
+        template_folder="html",
+        static_folder="frontend",
+        static_url_path="/static",
+    )
+
+Builds the server object and stores it in the variable app.
+  * template_folder="html"   -> templates (pages with blanks) are in html/
+  * static_folder="frontend" -> unchanging files (CSS, JS) are in frontend/
+  * static_url_path="/static"-> those files are served at /static/...
+    so  frontend/style.css  is reachable at  /static/style.css
+
+By default Flask expects folders named templates/ and static/; this
+project renamed them, so we tell Flask where to look.
+
+
+--- Line 33: the allowed hosts ---------------------------------------
+
+    ALLOWED_HOSTS = {f"127.0.0.1:{DASHBOARD_PORT}", f"localhost:{DASHBOARD_PORT}"}
+
+A set of the two addresses the page is allowed to be reached by:
+"127.0.0.1:5000" and "localhost:5000". Used for security in the close/
+reopen route below.
+
+
+--- Lines 36-39: route #1, the dashboard page ------------------------
+
+    @app.route("/")
+    def dashboard():
+        results = run_all()
+        return render_template("index.html", results=results, summary=build_summary(results))
+
+  1. @app.route("/")  registers this function for the address "/".
+  2. run_all()  runs every check and returns a LIST of result
+     dictionaries (doc 04).
+  3. build_summary(results)  turns those into totals and chart data
+     (doc 14).
+  4. render_template("index.html", results=..., summary=...)  opens
+     html/index.html, fills in every {{ }} blank using results and
+     summary, and returns the finished HTML text.
+  5. Returning it from the function makes Flask send it to the browser.
+
+The names results= and summary= become the variable names the template
+can use. Change them here and you'd have to change them in the template.
+
+
+--- Lines 42-45: route #2, the same data as JSON --------------------
+
+    @app.route("/api/scan")
+    def api_scan():
+        results = run_all()
+        return jsonify(results=results, summary=build_summary(results))
+
+Same data, but instead of an HTML page it returns JSON. Open
+http://127.0.0.1:5000/api/scan in a browser to see it. Useful for other
+programs, for debugging, or for a future feature like a PDF export.
+
+  Compare the two:
+    render_template(...)  ->  a page for humans
+    jsonify(...)          ->  data for programs
+
+
+--- Lines 48-67: route #3, closing and reopening ports ---------------
+
+    @app.post("/api/ports/<int:port>/<any(close, reopen):action>")
+    def port_action(port, action):
+
+@app.post means this only answers POST requests (the "do something"
+kind). The address has two VARIABLE PARTS in angle brackets:
+
+    <int:port>              any whole number, handed to the function as port
+    <any(close, reopen):action>   must be exactly "close" or "reopen",
+                            handed to the function as action
+
+So POST /api/ports/7000/close calls port_action(port=7000, action="close").
+POST /api/ports/abc/close or /api/ports/7000/explode don't match at all,
+and Flask answers "404 not found" by itself. This is our first layer of
+safety: junk never reaches our code.
+
+  SECURITY CHECK (line 50-51):
+
+    if request.host not in ALLOWED_HOSTS or request.headers.get("X-Dashboard") != "1":
+        abort(403)
+
+This route changes the firewall, so we must make sure the request
+really came from our own page, not from some random website you have
+open in another tab. Two checks:
+
+  (a) request.host must be 127.0.0.1:5000 or localhost:5000.
+      This blocks a trick called "DNS rebinding", where an evil
+      website makes your browser think its name points at 127.0.0.1.
+      The host name in the request would then be the evil site's name.
+
+  (b) The request must carry a custom header  X-Dashboard: 1.
+      A HEADER is a label attached to a request. Browsers have a safety
+      rule (CORS): a web page from site A may NOT send custom headers to
+      site B unless B explicitly agrees. Flask never agrees, so only
+      pages served by our own server can include this header.
+      dashboard.js adds it; nothing else can.
+
+  If either fails: abort(403) sends "403 Forbidden" and stops.
+
+  DOING THE WORK (lines 52-55):
+
+    try:
+        (close_port if action == "close" else reopen_port)(port)
+    except PortControlError as exc:
+        return jsonify(error=str(exc)), 400
+
+The middle line is compact. Unpacked, it means:
+
+    if action == "close":
+        close_port(port)
+    else:
+        reopen_port(port)
+
+If port_control.py raises a PortControlError (password prompt
+cancelled, invalid port, firewall failure...), we catch it and answer
+with JSON like {"error": "Cancelled at the administrator password
+prompt"} and status code 400 ("bad request"). dashboard.js shows that
+text in a red pop-up.
+
+  CONFIRMING IT WORKED (lines 57-67):
+
+    blocked = is_blocked(port)
+    if action == "close" and not blocked:
+        level = "warning"
+        message = (...still accepting connections...)
+    elif action == "close":
+        level, message = "success", f"Port {port} closed. ..."
+    else:
+        level, message = "success", f"Port {port} reopened."
+    return jsonify(port=port, action=action, blocked=blocked, level=level, message=message)
+
+Never trust that a change worked just because no error appeared. We
+ask is_blocked() to double-check, then send back a level ("success" or
+"warning") and a human message. dashboard.js uses level to pick the
+pop-up color.
+
+
+--- Lines 70-72: the start button ------------------------------------
+
+    if __name__ == "__main__":
+        # 127.0.0.1 only: the dashboard is never reachable from the network.
+        app.run(host="127.0.0.1", port=DASHBOARD_PORT, debug=True)
+
+Runs only when you type  python app.py.
+  * host="127.0.0.1"  listen ONLY for connections from this same
+    computer. Other devices on your Wi-Fi cannot open the dashboard.
+    (If this said "0.0.0.0" the whole network could reach it; that
+    would be dangerous here, because the page can change the firewall.)
+  * port=5000  listen on door 5000.
+  * debug=True  development mode: shows detailed errors and restarts
+    the server automatically when you save a .py file. Great while
+    building; turn it off for anything public.
+
+
+HTTP STATUS CODES YOU'LL SEE
+----------------------------
+Every response carries a number:
+    200  OK                 everything worked
+    304  Not Modified       "you already have this file, use your copy"
+    400  Bad Request        we understood, but it can't be done (our errors)
+    403  Forbidden          you're not allowed (our security check)
+    404  Not Found          no route matches that address
+    500  Internal Error     the Python code crashed
+You'll see these in the terminal where app.py runs, one line per request:
+
+    127.0.0.1 - - [26/Sep/2026 16:40:42] "POST /api/ports/7000/close HTTP/1.1" 400 -
+
+
+TRY IT
+------
+1. Add a new route that returns a greeting:
+
+       @app.route("/hello")
+       def hello():
+           return "Hello from the back end!"
+
+   Save, then open http://127.0.0.1:5000/hello. (debug=True restarts
+   the server for you.)
+
+2. Make it personal using a variable part:
+
+       @app.route("/hello/<name>")
+       def hello_name(name):
+           return f"Hello, {name}!"
+
+   Open http://127.0.0.1:5000/hello/Sam
+
+3. Return JSON:
+
+       @app.route("/api/time")
+       def api_time():
+           import datetime
+           return jsonify(now=str(datetime.datetime.now()))
+
+Remove your experiments afterwards (or use git to undo, doc 15).

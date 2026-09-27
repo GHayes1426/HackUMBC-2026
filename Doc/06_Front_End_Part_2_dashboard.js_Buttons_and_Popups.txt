@@ -1,0 +1,247 @@
+===========================================================================
+ 06  FRONT END PART 2  -  frontend/dashboard.js
+     The page's behavior: buttons, talking to the back end, pop-ups
+===========================================================================
+
+WHAT IT IS
+----------
+dashboard.js is JavaScript: the only programming language browsers run.
+It's the "electricity" of the page. Without it the page still shows all
+results (they're built into the HTML), but the Close/Reopen buttons
+wouldn't do anything and there'd be no pop-ups.
+
+It does four jobs:
+  1. show pop-up notifications ("toasts")
+  2. refresh the page's content WITHOUT reloading the whole page
+  3. when a Close/Reopen button is clicked, ask the back end to do it
+  4. make the Rescan link refresh in place too
+
+
+JAVASCRIPT VS PYTHON: A PHRASEBOOK
+----------------------------------
+Same ideas, different spelling:
+
+    Python                           JavaScript
+    ------                           ----------
+    # comment                        // comment
+    x = 5                            const x = 5;   (never changes)
+                                     let x = 5;     (can change)
+    def f(a):                        function f(a) { ... }
+        return a + 1                     return a + 1;
+    lambda a: a + 1                  (a) => a + 1
+    if x == 1:                       if (x === 1) { ... }
+    f"Port {port}"                   `Port ${port}`   (backticks!)
+    {"level": "info"}                { level: "info" }
+    None                             null / undefined
+    True / False                     true / false
+    try: ... except: ...             try { ... } catch (err) { ... }
+    and / or / not                   && / || / !
+
+Blocks use { } instead of indentation; lines usually end with ;.
+
+
+THE BIG NEW IDEAS
+-----------------
+EVENTS: things that happen in the page (a click, a key press). You
+"listen" for them and run a function when they happen:
+
+    document.addEventListener("click", (event) => { ... });
+
+"document" is the whole page. event.target is the thing clicked.
+
+THE DOM: the page as a tree of objects JavaScript can change.
+
+    document.getElementById("toasts")         find the element with id="toasts"
+    document.createElement("div")             make a new <div>
+    el.textContent = "Hello"                  set its text
+    el.className = "toast success"            set its classes
+    box.append(el)                            put el inside box
+    el.remove()                               delete it
+
+FETCH: send a request to the server from JavaScript, without leaving
+the page. This is how the front end talks to the back end.
+
+    const response = await fetch("/api/ports/7000/close", { method: "POST" });
+    const data = await response.json();       // read the JSON answer
+
+ASYNC / AWAIT: talking to the server takes time (and the password
+prompt can take many seconds). "await" means "wait here for the answer,
+but don't freeze the page meanwhile". Functions that use await are
+marked "async".
+
+
+WALKING THROUGH THE FILE
+------------------------
+
+--- The icon table ----------------------------------------------------
+
+    const ICONS = { success: "✓", info: "…", warning: "!", error: "×" };
+
+--- toast(): make a pop-up ---------------------------------------------
+
+    function toast(message, level = "info") {
+      const el = document.createElement("div");
+      el.className = `toast ${level}`;
+      el.setAttribute("role", level === "error" || level === "warning" ? "alert" : "status");
+      ... creates an icon <span>, a text <span>, and a × close <button> ...
+      close.addEventListener("click", () => el.remove());
+      el.append(icon, text, close);
+      document.getElementById("toasts").append(el);
+      // Successes fade on their own; problems stay until dismissed.
+      if (level === "success") setTimeout(() => el.remove(), 6000);
+      return el;
+    }
+
+Builds a little box in code, the same way you'd write it in HTML:
+
+    <div class="toast success" role="status">
+      <span class="toast-icon">✓</span>
+      <span class="toast-text">Port 7000 closed.</span>
+      <button class="toast-close">×</button>
+    </div>
+
+and drops it into the empty #toasts box from index.html. CSS pins that
+box to the bottom-right corner of the screen, so pop-ups are visible no
+matter how far you've scrolled. setTimeout(fn, 6000) means "run fn
+after 6000 milliseconds (6 seconds)", so success messages vanish
+automatically while errors stay until you click ×.
+
+Note it uses textContent (not innerHTML) for the message: textContent
+always shows text AS TEXT, so an error message can never inject HTML
+into the page. Same safety idea as Jinja's autoescaping.
+
+
+--- refresh(): update the page without reloading ---------------------
+
+    async function refresh() {
+      const main = document.getElementById("dashboard");
+      main.classList.add("refreshing");
+      try {
+        const response = await fetch("/", { cache: "no-store" });
+        if (!response.ok) throw new Error(`Rescan failed (${response.status})`);
+        const page = new DOMParser().parseFromString(await response.text(), "text/html");
+        main.replaceChildren(...page.getElementById("dashboard").childNodes);
+      } finally {
+        main.classList.remove("refreshing");
+      }
+    }
+
+Clever but simple:
+  1. Dim the current content (CSS class "refreshing" = 55% opacity).
+  2. Ask the server for the whole page again (GET /). This re-runs every
+     check on the back end, so the results are fresh.
+     cache: "no-store" = don't reuse an old copy.
+  3. DOMParser turns that HTML text into a page object in memory (not
+     shown on screen).
+  4. Take the NEW <main id="dashboard"> contents from it and swap them
+     in for the OLD ones. Everything else (the toasts box, your scroll
+     position) stays put.
+  5. "finally" runs whether it worked or not: un-dim the content.
+
+Why this way? The page's HTML is already produced by the template. By
+re-using it we don't need to rewrite the whole page-drawing logic in
+JavaScript. One source of truth: the template.
+
+
+--- portAction(button): the Close/Reopen flow ------------------------
+
+    async function portAction(button) {
+      const { kind, port } = button.dataset;
+
+button.dataset holds every data-* attribute. For
+<button data-kind="close" data-port="7000">, dataset is
+{kind: "close", port: "7000"}. The { kind, port } = ... syntax pulls
+both out into variables at once (like tuple unpacking in Python).
+
+      if (kind === "close" && !confirm(`Close port ${port}?\n\n...`)) return;
+
+confirm() shows the browser's built-in OK/Cancel box. If the user
+presses Cancel, stop (return). Only asked for "close", since reopening
+is the safe direction.
+
+      button.disabled = true;
+      button.textContent = kind === "close" ? "Closing…" : "Reopening…";
+      const waiting = toast("Waiting for administrator approval. ...", "info");
+
+Grey out the button (no double clicks) and tell the user to look for
+the password/permission prompt.
+
+      const response = await fetch(`/api/ports/${port}/${kind}`, {
+        method: "POST",
+        headers: { "X-Dashboard": "1" },
+      });
+      data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
+
+THE ACTUAL FRONT-END -> BACK-END CALL. It sends POST
+/api/ports/7000/close with the secret-handshake header X-Dashboard: 1
+(doc 03 explains why). response.ok is true for status 200-299. If the
+server said 400 or 403, we throw an error with the server's message.
+
+      } catch (err) {
+        waiting.remove();
+        const reason = err instanceof TypeError ? "Can't reach the dashboard server. Is app.py running?" : err.message;
+        toast(`Couldn't ${kind} port ${port}: ${reason}`, "error");
+        await refresh().catch(() => {});
+        return;
+      }
+
+On failure: remove the "waiting" pop-up and show a red one. A
+TypeError from fetch means the server couldn't be reached at all
+(app.py was stopped), so we say that in plain words.
+
+      waiting.remove();
+      await refresh();
+      toast(data.message, data.level || "success");
+
+On success: refresh the content (the row now shows "Reopen port"),
+then show the server's message in the color the server chose.
+
+
+--- The click listener -------------------------------------------------
+
+    document.addEventListener("click", (event) => {
+      const button = event.target.closest(".port-action");
+      if (button) {
+        portAction(button);
+        return;
+      }
+      if (event.target.closest("#rescan")) {
+        event.preventDefault();
+        refresh()
+          .then(() => toast("Rescan complete.", "success"))
+          .catch((err) => toast(err.message, "error"));
+      }
+    });
+
+ONE listener on the whole page instead of one per button. This is
+called EVENT DELEGATION. It matters here because refresh() replaces
+all the buttons with new ones; a listener attached to an old button
+would be lost, but a listener on the document keeps working.
+
+  * event.target.closest(".port-action") = "the clicked thing, or its
+    nearest parent, that has class port-action". Handles clicks on the
+    button's text too.
+  * For the Rescan link, event.preventDefault() stops the browser's
+    normal behavior (following the link = full page reload) and does a
+    smooth refresh() instead.
+
+
+HOW TO WATCH IT WORK
+--------------------
+Open the browser's Developer Tools (F12, or Cmd+Option+I on Mac):
+  * "Network" tab: click Close port and you'll see the POST request,
+    its status, and the JSON response.
+  * "Console" tab: shows JavaScript errors, and you can type code:
+        toast("Hello from the console!", "success")
+
+
+TRY IT
+------
+1. Change the success pop-up time from 6000 to 2000 milliseconds.
+2. In the Console tab run:  toast("Test warning", "warning")
+3. Add a keyboard shortcut: press R to rescan. At the bottom add:
+
+       document.addEventListener("keydown", (event) => {
+         if (event.key === "r") refresh().then(() => toast("Rescanned", "success"));
+       });

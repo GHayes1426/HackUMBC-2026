@@ -1,0 +1,234 @@
+===========================================================================
+ 13  CLOSING AND REOPENING PORTS  -  checks/port_control.py
+===========================================================================
+
+WHAT IT IS
+----------
+The only part of the app that CHANGES the computer. When you click
+Close port, this file adds a firewall rule that refuses connections to
+that port. Reopen removes the rule.
+
+"Closing" here does NOT stop the program behind the port; it's still
+running. The firewall just stands in the doorway and turns everyone
+away. That's what makes Reopen safe and instant: delete the rule and
+the door works again.
+
+
+WHY IT NEEDS YOUR PASSWORD
+--------------------------
+Changing the firewall affects the whole computer, so every OS demands
+administrator ("admin") permission. The dashboard itself runs as a
+normal user (much safer), so for this one action it asks the OS to show
+its standard permission prompt:
+
+    macOS    the "wants to make changes, enter your password" box
+    Windows  the UAC "Do you want to allow this app to make changes?" box
+    Linux    sudo (no pop-up; the dashboard must already have permission)
+
+
+REMEMBERING WHAT WE CLOSED
+--------------------------
+    STATE_DIR = Path(__file__).resolve().parent.parent / ".state"
+    STATE_FILE = STATE_DIR / "closed_ports.json"
+
+    def closed_ports():
+        try:
+            return set(json.loads(STATE_FILE.read_text()))
+        except (OSError, ValueError):
+            return set()
+
+    def _save(ports):
+        STATE_DIR.mkdir(exist_ok=True)
+        STATE_FILE.write_text(json.dumps(sorted(ports)))
+
+The list of ports we closed is saved in a tiny JSON file, e.g. [7000].
+Saving it in a file (not just in memory) means the dashboard still
+knows which ports to offer "Reopen" for after a restart.
+  * json.dumps(list) turns a Python list into JSON text; json.loads does
+    the reverse.
+  * mkdir(exist_ok=True) creates the .state folder if it isn't there.
+  * .state/ is listed in .gitignore, so it's never uploaded to GitHub:
+    each computer keeps its own.
+
+
+THE PUBLIC FUNCTIONS
+--------------------
+    def close_port(port):
+        _validate(port)
+        ports = closed_ports()
+        if port in ports:
+            return
+        _apply(ports | {port}, port, closing=True)
+        _save(ports | {port})
+
+  1. Validate (below).
+  2. Already closed? Nothing to do.
+  3. Apply the firewall change FIRST...
+  4. ...and only save after it succeeded. If the password prompt is
+     cancelled, _apply raises an error, _save never runs, and the saved
+     list stays accurate.
+
+reopen_port is the mirror image, using ports - {port}.
+
+
+VALIDATION: NEVER TRUST INPUT
+-----------------------------
+    def _validate(port):
+        if not isinstance(port, int) or not 1 <= port <= 65535:
+            raise PortControlError("Invalid port number")
+        if port == DASHBOARD_PORT:
+            raise PortControlError(f"Port {DASHBOARD_PORT} is the dashboard's own port and can't be closed here")
+
+  * Must be a whole number between 1 and 65535 (the valid port range).
+    Because the port is an int, it can never contain sneaky characters
+    that could inject extra commands into the firewall command below.
+    This is a key security habit: anything that ends up inside a
+    command must be strictly checked first.
+  * Never allow closing port 5000: that would cut off the dashboard
+    you're using to reopen it!
+
+    class PortControlError(Exception):
+        """A close/reopen failed; the message is shown to the user."""
+
+A custom error type. app.py catches exactly this type and shows its
+message in a red pop-up.
+
+
+CHOOSING THE OS
+---------------
+    def _apply(all_closed, port, closing):
+        system = platform.system()
+        if system == "Darwin":    _apply_pf(all_closed)
+        elif system == "Windows": _apply_windows(port, closing)
+        elif system == "Linux":   _apply_iptables(port, closing)
+        else: raise PortControlError(...)
+
+
+macOS: THE pf FIREWALL
+----------------------
+macOS has a powerful built-in firewall called pf ("packet filter"),
+controlled with the command pfctl. We keep our rules in our own named
+section (an "anchor") called com.apple/hackumbc, so we never touch
+anyone else's rules.
+
+    rules = "".join(
+        f"block return in quick proto tcp from any to any port {p}\\n" for p in sorted(all_closed)
+    )
+
+One rule per closed port, e.g.
+    block return in quick proto tcp from any to any port 7000
+  block     refuse it
+  return    and tell the caller "refused" right away (instead of silence)
+  in        incoming connections
+  quick     stop checking other rules once this one matches
+  proto tcp from any to any port 7000
+            any TCP connection, from anywhere, to port 7000
+
+We rewrite the WHOLE anchor from the full list every time, so close and
+reopen are the same operation ("make the rules match this list").
+
+    shell = (
+        f"printf '{rules}' | /sbin/pfctl -a {PF_ANCHOR} -f - && "
+        "(/sbin/pfctl -e 2>/dev/null; true)"
+    )
+
+The command to run as admin:
+  printf '...'            print the rules
+  | pfctl -a ANCHOR -f -  pipe them into pfctl, loading them into our
+                          anchor ("-f -" = read the rules from the pipe)
+  && (pfctl -e ...; true) then make sure pf is switched on
+
+A REAL BUG WE HIT: the first version saved the rules to a file in the
+project folder and told pfctl to read that file. It failed with
+"Operation not permitted", because the project is on the Desktop, and
+macOS privacy protection stops even admin commands from reading files
+on the Desktop. Piping the rules in directly avoids files entirely.
+
+    result = subprocess.run(
+        ["osascript", "-e", f'do shell script "{shell}" with administrator privileges'],
+        capture_output=True, text=True,
+    )
+
+osascript runs AppleScript, and "do shell script ... with administrator
+privileges" is the Apple-approved way to run a command as admin: it
+shows the password prompt. The .replace(...) line before it escapes
+backslashes and quotes so the command survives being placed inside an
+AppleScript string.
+
+    if "-128" in result.stderr:
+        raise PortControlError("Cancelled at the administrator password prompt")
+
+Error -128 is AppleScript's code for "user cancelled". Otherwise
+_pf_error() digs the real error out of pfctl's chatty output (it prints
+harmless warnings like "No ALTQ support in kernel" every time).
+
+
+WINDOWS: WINDOWS DEFENDER FIREWALL
+----------------------------------
+    name = f"{WINDOWS_RULE_PREFIX}{port}"          # e.g. "hackumbc-7000"
+    if closing:
+        args = f"advfirewall firewall add rule name={name} dir=in action=block protocol=TCP localport={port}"
+    else:
+        args = f"advfirewall firewall delete rule name={name}"
+
+netsh is Windows' network-settings command. One named rule per port,
+so reopening = deleting the rule by its name.
+
+    script = (
+        f"try {{ $p = Start-Process netsh -ArgumentList '{args}' -Verb RunAs -WindowStyle Hidden -Wait -PassThru; "
+        "exit $p.ExitCode } catch { ... if ($e.NativeErrorCode -eq 1223) { exit 1223 } ... }"
+    )
+
+PowerShell's Start-Process with -Verb RunAs = "run as administrator",
+which shows the UAC prompt. -Wait waits for it to finish; the exit code
+tells Python whether it worked. Windows error 1223 means the user
+clicked "No", which we turn into a friendly "Cancelled" message.
+(In f-strings, {{ and }} produce literal { and } characters.)
+
+
+LINUX: iptables
+---------------
+    cmd = ["iptables", "-I" if closing else "-D", *rule]
+    result = subprocess.run(["sudo", "-n", *cmd], capture_output=True, text=True)
+
+iptables -I inserts a rule, -D deletes it. sudo runs as admin; -n means
+"never ask for a password, fail instead" (a web server can't type a
+password), so on Linux the dashboard must be started with admin rights
+for this to work. The error message says exactly that.
+
+
+DID IT WORK? is_blocked()
+-------------------------
+    def is_blocked(port):
+        if platform.system() == "Windows":
+            result = subprocess.run(["netsh", "advfirewall", "firewall", "show", "rule",
+                                     f"name={WINDOWS_RULE_PREFIX}{port}"], ...)
+            return result.returncode == 0
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(0.5)
+            return sock.connect_ex(("127.0.0.1", port)) != 0
+
+On Mac and Linux: try to connect. If it's refused now, the block works.
+On Windows: its firewall never blocks connections a PC makes to itself,
+so a local test would always say "still open". Instead we confirm our
+rule exists (returncode 0 = found). Other devices are still blocked.
+
+
+THE FULL JOURNEY OF ONE CLICK
+-----------------------------
+  dashboard.js     POST /api/ports/7000/close  (with X-Dashboard: 1)
+  app.py           security checks -> close_port(7000)
+  port_control.py  _validate -> _apply -> _apply_pf -> osascript
+  macOS            password prompt -> pfctl loads the rule
+  port_control.py  _save([7000])
+  app.py           is_blocked(7000) -> True -> JSON "success"
+  dashboard.js     refresh() -> green pop-up
+  port_scan.py / listening_services.py  on the refreshed page see 7000
+                   in closed_ports() and show a Reopen button
+
+
+TRY IT (safely)
+---------------
+Port 7000 on a Mac is AirPlay: close it with the dashboard, then from
+an iPhone try to AirPlay to the Mac (it won't appear). Reopen it and
+it's back. That's the whole feature, visible in real life.

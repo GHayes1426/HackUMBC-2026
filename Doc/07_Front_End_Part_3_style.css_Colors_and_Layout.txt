@@ -1,0 +1,235 @@
+===========================================================================
+ 07  FRONT END PART 3  -  frontend/style.css  (how the page looks)
+===========================================================================
+
+WHAT IT IS
+----------
+CSS (Cascading Style Sheets) decides colors, sizes, spacing and layout.
+The HTML says "this is a list item with class status-warning"; the CSS
+says "things with class status-warning are red".
+
+
+CSS IN FIVE MINUTES
+-------------------
+A CSS file is a list of RULES. Each rule = a SELECTOR (which elements)
+plus DECLARATIONS (what to change) in { }:
+
+    .summary { margin: 0 0 12px; font-weight: 600; }
+    |        | |                                   |
+    selector   property: value;  property: value;
+
+Selectors:
+    h1              every <h1> tag
+    .panel          every element with class="panel"  (dot = class)
+    #toasts         the element with id="toasts"      (hash = id)
+    .panel h2       an <h2> INSIDE a .panel           (space = inside)
+    .bar-row.tone-warning .bar
+                    a .bar inside an element that has BOTH classes
+                    bar-row and tone-warning
+    .port-action:hover   a .port-action while the mouse is over it
+
+Common properties:
+    color               text color
+    background          fill color
+    border              outline, e.g. 1px solid #dde1e6
+    border-radius       rounded corners
+    margin / padding    space outside / inside the border
+    font-size, font-weight
+    width, height
+    display: grid / flex    layout systems (see below)
+
+Colors are written as hex codes: #RRGGBB, two digits each for red,
+green and blue, from 00 (none) to ff (full). #ffffff = white,
+#000000 = black, #d03b3b = mostly red.
+
+"Cascading" means that when several rules apply to the same element,
+the more specific or later one wins.
+
+
+THE KEY TRICK: VARIABLES (CUSTOM PROPERTIES)
+--------------------------------------------
+At the top of the file:
+
+    :root {
+      --bg: #f5f6f8;
+      --panel: #ffffff;
+      --text: #1c1f24;
+      --muted: #5d6470;
+      --border: #dde1e6;
+      --warning: #d03b3b;   /* RISK */
+      --review: #d99a00;    /* REVIEW */
+      --info: #2a78d6;      /* IN USE */
+      --ok: #1f9d55;        /* SAFE */
+      --error: #8a8f98;     /* UNKNOWN */
+      ...
+    }
+
+Names starting with -- are VARIABLES. :root means "the whole page".
+Anywhere below, var(--warning) means "the red defined above". Change
+the color in ONE place and it changes everywhere. (/* */ is a CSS
+comment.)
+
+
+DARK MODE
+---------
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #14161a;
+        --panel: #1d2026;
+        --text: #e6e8eb;
+        ...
+      }
+    }
+
+@media (...) means "only apply these rules when...". Here: when the
+computer is set to dark mode. It simply redefines the variables with
+darker values; nothing else in the file needs to know about dark mode.
+
+
+HOW STATUS BECOMES COLOR (THE WHOLE COLOR-CODING SYSTEM)
+--------------------------------------------------------
+    .status-warning { --dot: var(--warning); }
+    .status-review  { --dot: var(--review); }
+    .status-info    { --dot: var(--info); }
+    .status-ok      { --dot: var(--ok); }
+    .status-error   { --dot: var(--error); }
+    .panel { border-left-color: var(--dot); }
+
+Each status class sets ONE variable, --dot, to its color. Then every
+colored piece just uses var(--dot):
+
+    .tag-icon { background: var(--dot); ... }       the colored circle
+    .tile     { border-top: 4px solid var(--dot); } the tile's top stripe
+    .panel    { border-left-color: var(--dot); }    the panel's left stripe
+
+Because variables are INHERITED by everything inside an element, a tag
+inside <li class="item status-review"> automatically becomes amber.
+
+Full chain, from Python to pixel:
+
+    Python:    {"status": "review", ...}
+    Template:  <li class="item status-{{ item.status }}">
+    Browser:   <li class="item status-review">
+    CSS:       .status-review { --dot: var(--review); }   -> #d99a00
+    Result:    amber tag and circle
+
+
+THE STATUS TAG
+--------------
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 8px 2px 3px;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--dot) 14%, transparent);
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      ...
+    }
+
+  * border-radius: 999px makes a "pill" shape.
+  * color-mix(... var(--dot) 14%, transparent) = a very faint tint of
+    the status color as the background.
+  * text-transform: uppercase shows "Risk" as RISK without changing
+    the HTML.
+
+The text stays in the normal text color on purpose: pale colors like
+amber are hard to read as text, so the color goes on the circle and
+the tint, and the word is always readable.
+
+
+LAYOUT: GRID AND FLEX
+---------------------
+Two systems for arranging boxes:
+
+FLEX: a row (or column) of boxes.
+    .panel-head { display: flex; align-items: center; gap: 10px; }
+    -> the panel title and its tag sit side by side, vertically centered,
+       10px apart.
+
+GRID: rows and columns, like a spreadsheet.
+    .item {
+      display: grid;
+      grid-template-columns: 108px minmax(150px, 250px) 1fr auto;
+      gap: 12px;
+      ...
+    }
+    Each item row has four columns:
+      108px                 the tag (fixed width, so tags line up)
+      minmax(150px, 250px)  the label (between 150 and 250 px wide)
+      1fr                   the detail ("one fraction" = all leftover space)
+      auto                  the button (as wide as it needs)
+
+    .tiles {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr));
+    }
+    "Make as many columns as fit, each at least 170px (or the full width
+    if the screen is narrower than that)." So: 4 tiles in a row on a
+    laptop, 2 on a tablet, 1 on a phone, with no extra code.
+
+
+THE BAR CHARTS
+--------------
+    .bar {
+      display: block;
+      height: 14px;
+      min-width: 2px;
+      background: var(--series);
+      border-radius: 0 4px 4px 0;
+    }
+    .bar-row.tone-warning .bar { background: var(--warning); }
+    .bar-row.tone-review  .bar { background: var(--review); }
+    ...
+
+A bar is a 14px-tall box. Its width comes from the template
+(style="width: 67%"). border-radius: 0 4px 4px 0 rounds only the right
+end (corners go top-left, top-right, bottom-right, bottom-left).
+min-width: 2px keeps a zero-value bar visible as a thin tick.
+
+
+THE POP-UPS (TOASTS)
+--------------------
+    .toasts {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      z-index: 10;
+      ...
+    }
+
+position: fixed pins the box to the SCREEN rather than the page, so
+it stays in the bottom-right corner while you scroll. z-index: 10 puts
+it above other content.
+
+    @keyframes toast-in {
+      from { opacity: 0; transform: translateY(8px); }
+    }
+    .toast { animation: toast-in 0.2s ease-out; }
+
+An animation: each toast starts invisible and 8px lower, and slides
+into place over 0.2 seconds.
+
+
+WORKING ON PHONES (RESPONSIVE DESIGN)
+-------------------------------------
+    @media (max-width: 560px) {
+      .item { grid-template-columns: 1fr; gap: 4px; }
+      ...
+    }
+
+"When the screen is 560px wide or less": each item becomes a single
+column (tag, then label, then detail stacked), because four columns
+don't fit on a phone.
+
+
+TRY IT
+------
+1. Change --info to purple (#7b3fe4). Reload: all IN USE items turn
+   purple, in the key, the tiles, the chart and the panels.
+2. Make panels rounder: find .panel and change border-radius to 16px.
+3. Right-click any element -> "Inspect". The browser shows which CSS
+   rules apply; you can edit values live there to experiment (changes
+   are lost on reload, so copy good ones into style.css).

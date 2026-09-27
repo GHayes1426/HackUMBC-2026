@@ -1,0 +1,234 @@
+===========================================================================
+ 09  WHICH PROGRAMS ARE USING THE NETWORK
+     checks/system.py, checks/listeners.py, checks/listening_services.py
+===========================================================================
+
+THE PROBLEM THESE SOLVE
+-----------------------
+port_scan.py only knocks on 10 chosen doors. But any program can open
+any door. To find ALL of them, we ask the operating system directly:
+"list every program that is listening for connections, and on which
+port". Each OS answers that question with a different command, which
+is why these files have Mac, Windows and Linux versions.
+
+Three files, three layers:
+
+    system.py              HOW to run an OS command     (a tool)
+    listeners.py           WHICH programs are listening (uses the tool)
+    listening_services.py  the dashboard PANEL          (uses the list)
+
+
+===========================================================================
+ checks/system.py  -  running OS commands
+===========================================================================
+
+    OS = platform.system()
+
+platform.system() returns "Darwin" (the technical name of macOS),
+"Windows" or "Linux". Stored once in OS so other files can do:
+
+    lister = {"Darwin": _listeners_macos, "Windows": _listeners_windows,
+              "Linux": _listeners_linux}.get(OS)
+
+That's a DISPATCH TABLE: a dictionary from OS name to the function to
+use. Cleaner than a long if/elif chain. .get(OS) returns None if the OS
+isn't in the table.
+
+    def run(command, timeout=15):
+        """Run a command; return (exit code, stdout + stderr), or (None, "") if it couldn't start."""
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
+        except (OSError, subprocess.SubprocessError):
+            return None, ""
+        return result.returncode, result.stdout + result.stderr
+
+A safe wrapper around subprocess.run (doc 02, section 14). If the
+command doesn't exist on this computer (OSError) or hangs past the
+timeout, it returns None instead of crashing. Every check then just
+tests "if code is None: couldn't run it".
+
+    def powershell_json(script, timeout=20):
+        ...
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+             f"ConvertTo-Json -Compress -Depth 3 -InputObject @({script})"],
+        ...
+        data = json.loads(result.stdout or "null")
+        ...
+        return data if isinstance(data, list) else [data]
+
+For Windows. PowerShell is Windows' command language. Its commands
+return structured OBJECTS rather than plain text, and ConvertTo-Json
+turns them into JSON, which Python's json.loads turns into Python
+lists and dictionaries. Why bother? Plain-text output changes with the
+computer's language: a German Windows says "ABHÖREN" where English says
+"LISTENING", so parsing text would break. JSON field names never
+change.
+
+  @( ... ) forces PowerShell to produce a list even when there's one
+  result; the last line does the same on the Python side.
+
+
+===========================================================================
+ checks/listeners.py  -  which programs are listening
+===========================================================================
+
+Each OS gets a function that returns a list of
+(program name, address, port) tuples.
+
+--- macOS: lsof --------------------------------------------------------
+
+    code, out = run(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-F", "cn"])
+
+lsof = "list open files" (on Unix, network connections count as files).
+  -nP             show numbers, don't look up names (faster)
+  -iTCP -sTCP:LISTEN   only TCP sockets that are waiting for connections
+  -F cn           machine-readable output: c = command, n = name/address
+
+The output looks like:
+
+    p642
+    cControlCenter
+    n*:7000
+    n*:5000
+
+A line starting with c gives the program; lines starting with n give
+its addresses. The loop remembers the latest c, and for each n line
+splits "*:7000" into address "*" and port 7000:
+
+    for line in out.splitlines():
+        if line.startswith("c"):
+            command = re.sub(r"\\x([0-9a-fA-F]{2})", lambda m: chr(int(m[1], 16)), line[1:])
+        elif line.startswith("n") and (split := _split_address(line[1:])):
+            found.append((command, *split))
+
+The re.sub line decodes lsof's escapes: it writes a space as \x20, so
+"Code\x20Helper" becomes "Code Helper". (re is Python's REGULAR
+EXPRESSION module, a mini-language for finding text patterns; see doc
+11 for more.) The := is the "walrus operator": assign AND test in one
+go ("if split, which is _split_address(...), isn't empty").
+
+--- Windows: Get-NetTCPConnection -------------------------------------
+
+    rows = powershell_json(
+        "Get-NetTCPConnection -State Listen | ForEach-Object { [pscustomobject]@{"
+        " a = $_.LocalAddress; p = $_.LocalPort;"
+        " n = (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName } }"
+    )
+
+In PowerShell: get every listening TCP connection; for each one make a
+small object with a = address, p = port, n = the name of the owning
+program (found by its process ID). The | is a PIPE: "send the results
+of the left command into the right command".
+
+--- Linux: ss ----------------------------------------------------------
+
+    code, out = run(["ss", "-Hltnp"])
+
+ss = "socket statistics". -l listening, -t TCP, -n numbers, -p show
+programs, -H no header line. A line looks like:
+
+    LISTEN 0 4096 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=812,fd=3))
+
+The 4th column (cols[3]) is the address:port, and a regular expression
+pulls the program name out of users:(("sshd",...
+
+--- Combining and caching ---------------------------------------------
+
+    def get_listeners():
+        if time.monotonic() - _cache["time"] < CACHE_SECONDS:
+            return _cache["value"]
+        ...
+            for command, address, port in found:
+                key = (command, port)
+                listeners[key] = listeners.get(key, False) or address.split("%")[0] in EXPOSED_ADDRESSES
+        _cache.update(time=time.monotonic(), value=listeners)
+        return listeners
+
+Returns a dictionary {(program, port): exposed?}.
+
+EXPOSED vs LOCAL: this is the key security idea.
+
+    EXPOSED_ADDRESSES = {"*", "0.0.0.0", "[::]", "::"}
+
+A program listening on 127.0.0.1 only accepts connections from this
+same computer. A program listening on 0.0.0.0 (or *, or ::) means "any
+address", so other devices on the network can connect too. Same
+program, very different risk. A program often listens on both IPv4 and
+IPv6; the "or" makes it count as exposed if ANY of its addresses is.
+
+CACHING: both the Port Assessor and Listening Services need this list
+during the same page load. On Windows the PowerShell call takes about a
+second, so we remember the answer for 5 seconds (time.monotonic() is a
+stopwatch that never jumps backwards) instead of asking twice.
+
+    def programs_on_port(port):
+        return sorted({command for command, p in (get_listeners() or {}) if p == port})
+
+A convenience for port_scan.py: "who's on port 445?"
+
+
+===========================================================================
+ checks/listening_services.py  -  the dashboard panel
+===========================================================================
+
+For every listening program (except the 10 risky ports, which the Port
+Assessor already covers), decide a status and write an explanation.
+
+    for (command, port), exposed in sorted(listeners.items(), key=lambda kv: kv[0][1]):
+        if port in RISKY_PORTS:
+            continue  # already reported by the Port Assessor
+        info = describe(command, port)
+
+sorted(..., key=...) sorts by port number (kv[0][1] = the port inside
+the key tuple). continue = skip to the next one. describe() is from
+port_catalog.py (doc 10) and returns {name, what, advice, known}.
+
+THE DECISION (this is where the colors come from):
+
+    if port in closed_here:            -> "ok"      green  + Reopen button
+    elif info["known"]:                -> "info"    blue   IN USE
+    elif exposed:                      -> "review"  amber  REVIEW
+    else:                              -> "ok"      green  (unknown but local-only)
+
+and, for exposed ports that aren't the dashboard's own port:
+
+    item["action"] = {"kind": "close", "port": port}
+
+Why this order? A recognized app (AirPlay, VS Code) is expected, so blue
+even if exposed; the text explains the exposure and how to turn it off.
+An UNrecognized program that other devices can reach is worth a look,
+so amber. An unrecognized program that only this computer can reach is
+low risk, so green.
+
+The detail text is glued together from pieces:
+
+    def _sentence(*parts):
+        return " ".join(part for part in parts if part)
+
+*parts means "accept any number of arguments". Empty pieces are
+skipped, so there are no double spaces when, say, advice is empty.
+
+    "detail": _sentence(info["what"], reach, info["advice"])
+    # e.g. "Lets iPhones ... stream to this Mac. Reachable from other
+    #       devices on your network. Turn off in System Settings > ..."
+
+The result also includes a "note", shown as small print under the
+panel summary, explaining what this OS can and can't see:
+
+    SCOPE_NOTE = {
+        "Darwin": "Shows programs run by your user; system services need admin rights to list.",
+        ...
+    }
+
+
+TRY IT
+------
+1. In a terminal run the commands yourself and compare with the page:
+       Mac:      lsof -nP -iTCP -sTCP:LISTEN
+       Windows:  Get-NetTCPConnection -State Listen   (in PowerShell)
+       Linux:    ss -ltnp
+2. Start a server that the whole network can reach:
+       python3 -m http.server 8123 --bind 0.0.0.0
+   Reload: a new amber REVIEW row for port 8123 appears with a Close
+   button. Now restart it with --bind 127.0.0.1 and reload: it turns
+   green, "Only reachable from this computer".

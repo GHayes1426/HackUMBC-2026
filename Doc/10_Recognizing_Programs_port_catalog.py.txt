@@ -1,0 +1,149 @@
+===========================================================================
+ 10  RECOGNIZING PROGRAMS  -  checks/port_catalog.py
+===========================================================================
+
+WHAT IT IS
+----------
+A "phone book" of common programs and ports, with plain-English
+descriptions. It's what lets the dashboard say "Port 7000 is AirPlay:
+lets iPhones stream to this Mac; turn it off in Settings if you don't
+use it" instead of just "Port 7000 open", and what decides blue (IN USE)
+vs amber (REVIEW).
+
+It's mostly DATA plus one small function, describe(). Keeping
+knowledge (data) separate from logic (code) means anyone can teach the
+dashboard about a new app by adding a line, without understanding the
+logic.
+
+
+THE TWO TABLES
+--------------
+
+PROGRAMS: program name -> (friendly name, what it does, advice)
+
+    PROGRAMS = {
+        "controlcenter": (
+            "AirPlay Receiver (macOS)",
+            "Lets iPhones, iPads and other Macs stream music, video or screen mirroring to this Mac.",
+            "Turn off in System Settings > General > AirDrop & Handoff > AirPlay Receiver if you don't use it.",
+        ),
+        "spoolsv": (
+            "Windows Print Spooler",
+            "Manages printing, including printing to and from other computers.",
+            "If you never print over the network, disabling the Print Spooler service removes a known attack target (PrintNightmare).",
+        ),
+        "code": ("Visual Studio Code", ...),
+        ...
+    }
+
+Keys are lowercase program names (or the start of them).
+
+PORTS: port number -> (service name, what it does, advice)
+
+    PORTS = {
+        22:  ("SSH", "Encrypted remote login to this computer's command line.", "Keep only if you log in remotely; use keys, not passwords."),
+        445: ("SMB file sharing", "Windows file and printer sharing ...", "Turn off file sharing if you don't use it; ..."),
+        7680: ("Windows Delivery Optimization", "Shares Windows updates with other PCs ...", ...),
+        ...
+    }
+
+
+THE describe() FUNCTION, STEP BY STEP
+-------------------------------------
+Input: a program name and a port. Output: a dictionary
+{"name", "what", "advice", "known"}.
+
+  STEP 1  Tidy the name
+
+    def _normalize(command):
+        name = command.lower().strip()
+        return name[:-4] if name.endswith(".exe") else name
+
+    "Discord.exe" -> "discord". name[:-4] means "all but the last 4
+    characters" (Python "slicing").
+
+  STEP 2  Special case: the dashboard itself
+
+    if port == DASHBOARD_PORT and name.startswith("python"):
+        return {"name": "This dashboard", ...}
+
+  STEP 3  Look the program up by name (prefix match)
+
+    if name not in GENERIC_HOSTS:
+        for key in sorted(PROGRAMS, key=len, reverse=True):
+            if name.startswith(key):
+                friendly, what, advice = PROGRAMS[key]
+                return {"name": friendly, "what": what, "advice": advice, "known": True}
+
+    "Code Helper (Plugin)" -> "code helper (plugin)" starts with "code",
+    so it's VS Code. Keys are tried LONGEST FIRST (sorted by length,
+    reversed) so a specific entry like "nvidia web helper" wins over a
+    shorter one that might also match.
+
+  STEP 4  Generic Windows hosts: the port tells you what it is
+
+    GENERIC_HOSTS = {"svchost", "system"}
+
+    On Windows, dozens of different services all run inside a program
+    called "svchost" ("service host"), and file sharing runs inside
+    "System". The program name tells you nothing, but the port does:
+    svchost on 7680 is Delivery Optimization; System on 445 is file
+    sharing. Also when Linux hides the name (shows "?").
+
+    trusted_by_port = name in GENERIC_HOSTS or name == "?"
+    if port in PORTS:
+        service, what, advice = PORTS[port]
+        if trusted_by_port:
+            return {... "known": True}
+        return {"name": command,
+                "what": f"Port {port} is normally used for {service} (...).",
+                "advice": "", "known": False}
+
+  THE IMPORTANT SAFETY RULE: for any OTHER program, being on a familiar
+  port does NOT make it "known". Malware could deliberately listen on
+  8080 to look like a normal web server. So an unrecognized program on
+  a familiar port stays known=False (amber), and the port's usual use
+  is only given as context: "Port 8080 is normally used for ...".
+
+  STEP 5  Windows' internal high ports
+
+    if name in GENERIC_HOSTS and 49152 <= port <= 65535:
+        return WINDOWS_DYNAMIC_RPC info, known=True
+
+    Windows core services grab ports from 49664 upward for internal
+    communication. 49152 <= port <= 65535 is Python's neat way to write
+    "port is between 49152 and 65535".
+
+  STEP 6  Nothing matched
+
+    return {"name": command, "what": "", "advice": "", "known": False}
+
+
+EXAMPLES
+--------
+    describe("ControlCenter", 7000)
+      -> known=True,  "AirPlay Receiver (macOS)"            -> blue
+    describe("svchost", 5040)
+      -> known=True,  "Windows Connected Devices Platform"  -> blue
+    describe("mystery", 8080)
+      -> known=False, "Port 8080 is normally used for Web server / proxy (...)"
+                                                           -> amber if exposed
+    describe("sshd", 22)
+      -> known=True,  "SSH server"                          -> blue
+
+port_info(port) is a smaller helper returning just (service, what) for
+a port, used by the Port Assessor to explain each risky port.
+
+
+TRY IT
+------
+Teach the dashboard about an app you use. Find its program name in the
+Listening Services panel (e.g. "Slack"), then add to PROGRAMS:
+
+    "slack": (
+        "Slack",
+        "Local helper Slack uses for calls and its desktop features.",
+        "Normal while Slack is open.",
+    ),
+
+Save, reload: that row turns from amber/green to blue with your text.

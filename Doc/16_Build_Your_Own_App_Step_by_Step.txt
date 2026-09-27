@@ -1,0 +1,267 @@
+===========================================================================
+ 16  BUILD YOUR OWN APP, STEP BY STEP
+     A tiny version of this dashboard from an empty folder
+===========================================================================
+
+You'll build "Mini Monitor": a web page showing a few facts about your
+computer, with color-coded statuses, a plugin system, and a button
+that talks to the back end. Every step mirrors something in the real
+project. Type the code yourself rather than copy-pasting; you'll learn
+far more.
+
+
+STEP 0  SET UP
+--------------
+Make a new folder somewhere (e.g. Documents/mini-monitor), open it in
+VS Code (File > Open Folder), then open a terminal in VS Code
+(Terminal > New Terminal) and run:
+
+    Mac/Linux:                         Windows (PowerShell):
+    python3 -m venv .venv              py -m venv .venv
+    source .venv/bin/activate          .venv\Scripts\Activate.ps1
+    pip install flask                  pip install flask
+
+
+STEP 1  THE SMALLEST SERVER  (compare: app.py)
+----------------------------------------------
+Create app.py:
+
+    from flask import Flask
+
+    app = Flask(__name__)
+
+    @app.route("/")
+    def home():
+        return "Hello! The back end is alive."
+
+    if __name__ == "__main__":
+        app.run(host="127.0.0.1", port=5050, debug=True)
+
+Run  python app.py  and open http://127.0.0.1:5050/ .
+You just built a back end. (Port 5050 so it doesn't clash with the
+real dashboard on 5000.)
+
+
+STEP 2  DECIDE THE DATA SHAPE FIRST  (compare: checks/base.py contract)
+-----------------------------------------------------------------------
+Before writing checks, agree on what every check returns:
+
+    {"status": "ok" | "warning", "summary": "text",
+     "items": [{"label": "text", "status": "ok" | "warning", "detail": "text"}]}
+
+Write it at the top of your next file as a comment. Everything else
+depends on this promise.
+
+
+STEP 3  A PLUGIN SYSTEM  (compare: checks/base.py)
+--------------------------------------------------
+Create a folder called checks, and inside it base.py:
+
+    REGISTRY = []
+
+    class Check:
+        NAME = "Unnamed"
+        def run(self):
+            raise NotImplementedError
+
+    def register(cls):
+        REGISTRY.append(cls)
+        return cls
+
+    def run_all():
+        results = []
+        for cls in REGISTRY:
+            try:
+                result = cls().run()
+            except Exception as exc:
+                result = {"status": "warning", "summary": f"Crashed: {exc}", "items": []}
+            results.append({"name": cls.NAME, **result})
+        return results
+
+
+STEP 4  YOUR FIRST TWO CHECKS  (compare: port_scan.py, hardening.py)
+--------------------------------------------------------------------
+checks/disk.py: is the disk getting full?
+
+    import shutil
+    from checks.base import Check, register
+
+    @register
+    class DiskCheck(Check):
+        NAME = "Disk Space"
+
+        def run(self):
+            usage = shutil.disk_usage("/")
+            free_pct = usage.free / usage.total * 100
+            status = "ok" if free_pct > 15 else "warning"
+            return {
+                "status": status,
+                "summary": f"{free_pct:.0f}% free",
+                "items": [{"label": "Main disk", "status": status,
+                           "detail": f"{usage.free // 1_000_000_000} GB free of "
+                                     f"{usage.total // 1_000_000_000} GB"}],
+            }
+
+  ({free_pct:.0f} formats the number with 0 decimal places; // is
+  whole-number division.)
+
+checks/ports.py: a mini port scanner.
+
+    import socket
+    from checks.base import Check, register
+
+    WATCH = {22: "SSH", 3389: "Remote Desktop", 5900: "Screen Sharing"}
+
+    def is_open(port):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(0.3)
+            return sock.connect_ex(("127.0.0.1", port)) == 0
+
+    @register
+    class PortCheck(Check):
+        NAME = "Remote Access Ports"
+
+        def run(self):
+            items = []
+            for port, name in WATCH.items():
+                open_ = is_open(port)
+                items.append({"label": f"{port} {name}",
+                              "status": "warning" if open_ else "ok",
+                              "detail": "OPEN" if open_ else "Closed"})
+            bad = [i for i in items if i["status"] == "warning"]
+            return {"status": "warning" if bad else "ok",
+                    "summary": f"{len(bad)} open", "items": items}
+
+checks/__init__.py: the list of checks.
+
+    from checks import disk   # noqa: F401
+    from checks import ports  # noqa: F401
+
+
+STEP 5  A TEMPLATE  (compare: html/index.html)
+----------------------------------------------
+Create a folder templates (Flask's default name) with index.html:
+
+    <!doctype html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <title>Mini Monitor</title>
+      <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+      <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+    </head>
+    <body>
+      <h1>Mini Monitor</h1>
+      <button id="ping">Ask the back end the time</button>
+      <p id="answer"></p>
+
+      {% for check in results %}
+      <section class="panel status-{{ check.status }}">
+        <h2>{{ check.name }}</h2>
+        <p>{{ check.summary }}</p>
+        <ul>
+          {% for item in check["items"] %}
+          <li class="status-{{ item.status }}">
+            <b>{{ item.label }}</b>: {{ item.detail }}
+          </li>
+          {% endfor %}
+        </ul>
+      </section>
+      {% endfor %}
+    </body>
+    </html>
+
+Update app.py to use the checks and the template:
+
+    from flask import Flask, jsonify, render_template
+    import datetime
+
+    import checks  # noqa: F401  (registers the checks)
+    from checks.base import run_all
+
+    app = Flask(__name__)
+
+    @app.route("/")
+    def home():
+        return render_template("index.html", results=run_all())
+
+    @app.route("/api/time")
+    def api_time():
+        return jsonify(time=datetime.datetime.now().strftime("%H:%M:%S"))
+
+    if __name__ == "__main__":
+        app.run(host="127.0.0.1", port=5050, debug=True)
+
+
+STEP 6  STYLE  (compare: frontend/style.css)
+--------------------------------------------
+Create a folder static with style.css:
+
+    :root { --ok: #1f9d55; --warning: #d03b3b; }
+    body { font-family: system-ui, sans-serif; max-width: 700px; margin: 24px auto; padding: 0 16px; }
+    .panel { border: 1px solid #ddd; border-left: 6px solid var(--dot); border-radius: 8px;
+             padding: 12px 16px; margin: 16px 0; }
+    .status-ok      { --dot: var(--ok); }
+    .status-warning { --dot: var(--warning); }
+    li::before { content: "● "; color: var(--dot); }
+
+(li::before adds a colored dot before each item using the same --dot
+trick as the real project.)
+
+
+STEP 7  FRONT END TALKS TO BACK END  (compare: frontend/dashboard.js)
+---------------------------------------------------------------------
+Create static/app.js:
+
+    document.getElementById("ping").addEventListener("click", async () => {
+      const response = await fetch("/api/time");
+      const data = await response.json();
+      document.getElementById("answer").textContent = `The back end says it's ${data.time}`;
+    });
+
+Reload the page and click the button. The browser (front end) sent a
+request to Python (back end), Python answered with JSON, and JavaScript
+put the answer on the page without reloading. That is the whole
+front-end/back-end relationship in 5 lines.
+
+
+STEP 8  COMPARE YOUR APP TO THE REAL ONE
+----------------------------------------
+    Your Mini Monitor            The real dashboard
+    -----------------            ------------------
+    app.py                       app.py (+ security checks, POST routes)
+    checks/base.py               checks/base.py (+ 5 statuses, notes, charts)
+    checks/disk.py, ports.py     port_scan.py, listening_services.py, ...
+    templates/index.html         html/index.html (+ summary, key, buttons)
+    static/style.css             frontend/style.css (+ dark mode, charts, phone)
+    static/app.js                frontend/dashboard.js (+ POST, refresh, toasts)
+    /api/time                    /api/scan, /api/ports/<port>/close
+
+Same skeleton, more features. You now know how the real one is built.
+
+
+STEP 9  CHALLENGES (in rising difficulty)
+-----------------------------------------
+  1. Add a check for how long the computer has been on, or battery level
+     (search "python psutil" and pip install psutil).
+  2. Add a third status "info" with a blue color.
+  3. Add a "Rescan" button that fetches "/" and swaps in the new panels
+     (copy the refresh() idea from dashboard.js).
+  4. Add a POST route and a button that DOES something harmless, e.g.
+     writes a note to a file, and shows a pop-up with the result.
+  5. Add a summary at the top: "N warnings across M checks".
+  6. Put it on GitHub: git init, git add ., git commit -m "Mini Monitor",
+     then create a repo on github.com and follow its "push an existing
+     repository" instructions.
+
+
+GOLDEN RULES YOU'VE SEEN IN THIS PROJECT
+----------------------------------------
+  * Decide the data shape (contract) first.
+  * Keep data (tables, rules) separate from logic (code).
+  * One job per file.
+  * Let a broken piece fail alone (try/except around each plugin).
+  * Never trust input: validate anything that reaches a command.
+  * Confirm that changes really worked; tell the user clearly either way.
+  * Be honest in the UI: say when data is sample data, or couldn't be checked.
+  * Serve on 127.0.0.1 unless you truly mean to share it with the network.
